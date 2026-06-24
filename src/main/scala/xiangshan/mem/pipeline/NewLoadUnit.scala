@@ -880,6 +880,7 @@ class LoadUnitS2(param: ExeUnitParams)(
   val isMMIOReplay = in.isMMIOReplay()
   val isNCReplay = in.isNCReplay()
   val isUncacheReplay = in.isUncacheReplay()
+  val isCMAReplay = LoadEntrance.isReplay(entrance) && in.cause.get(LoadReplayCauses.C_MA)
   val isPrefetch = accessType.isPrefetch()
   val isHwPrefetch = accessType.isHwPrefetch()
   val isSwPrefetch = accessType.isSwPrefetch()
@@ -1134,6 +1135,10 @@ class LoadUnitS2(param: ExeUnitParams)(
   stageInfo.addrInvalidSqIdx.get := sqAddrInvalidSqIdx
   stageInfo.tlbId.get := io.tlbHint.id
   stageInfo.tlbFull.get := io.tlbHint.full
+  stageInfo.mdpAddrValid.get := io.sqForwardResp.valid && io.sqForwardResp.bits.mdpAddrValid
+  stageInfo.mdpAddrStrict.get := io.sqForwardResp.bits.mdpAddrStrict
+  stageInfo.mdpAddrHit.get := io.sqForwardResp.bits.mdpAddrHit
+  stageInfo.isCMAReplay.get := isCMAReplay
   // Pre-process for s3
   stageInfo.troubleMaker.get := troubleMaker
   stageInfo.shouldFastReplay.get := in.shouldFastReplay.get || fastReplay && !exception
@@ -1264,6 +1269,8 @@ class LoadUnitS3(param: ExeUnitParams)(
 
     // Load cancel
     val cancel = Output(Bool())
+
+    val mdpAddrPerf = Output(new MdpAddrPerf)
 
     // CSR control signals
     val csrCtrl = Flipped(new CustomCSRCtrlIO)
@@ -1458,6 +1465,27 @@ class LoadUnitS3(param: ExeUnitParams)(
   val lqWrite = Wire(new LqWriteBundle)
   val lqWriteMshrId = Mux(s4HeadCacheMiss && s4HeadValid, s4HeadMshrId, in.mshrId.get)
   val lqWriteHandledByMSHR = Mux(s4HeadCacheMiss && s4HeadValid, s4HeadHandledByMSHR, in.handledByMSHR.get)
+  val isReplayExec = LoadEntrance.isReplay(entrance) || s4HeadIsReplay && s4HeadValid
+  val mdpAddrValid = Mux(s4HeadValid, s4Head.mdpAddrValid.get, in.mdpAddrValid.get)
+  val mdpAddrStrict = Mux(s4HeadValid, s4Head.mdpAddrStrict.get, in.mdpAddrStrict.get)
+  val mdpAddrHit = Mux(s4HeadValid, s4Head.mdpAddrHit.get, in.mdpAddrHit.get)
+  val isCMAReplay = Mux(s4HeadValid, s4Head.isCMAReplay.get, in.isCMAReplay.get)
+  val isCMAReplayExec = isReplayExec && isCMAReplay
+  val isLoadUnitFirstExec = !isReplayExec
+  val mdpAddrCanCount = lqWriteValid && !lqWriteNeedReplay && mdpAddrValid
+  val mdpAddrNonStrict = !mdpAddrStrict
+  val mdpAddrMiss = !mdpAddrHit
+  val loadunitMdpAddrCanCount = mdpAddrCanCount && isLoadUnitFirstExec
+  val replayMdpAddrCanCount = mdpAddrCanCount && isCMAReplayExec
+  val mdpAddrPerf = Wire(new MdpAddrPerf)
+  mdpAddrPerf.loadunitNonStrictHit := loadunitMdpAddrCanCount && mdpAddrNonStrict && mdpAddrHit
+  mdpAddrPerf.loadunitNonStrictMiss := loadunitMdpAddrCanCount && mdpAddrNonStrict && mdpAddrMiss
+  mdpAddrPerf.loadunitStrictHit := loadunitMdpAddrCanCount && mdpAddrStrict && mdpAddrHit
+  mdpAddrPerf.loadunitStrictMiss := loadunitMdpAddrCanCount && mdpAddrStrict && mdpAddrMiss
+  mdpAddrPerf.replayNonStrictHit := replayMdpAddrCanCount && mdpAddrNonStrict && mdpAddrHit
+  mdpAddrPerf.replayNonStrictMiss := replayMdpAddrCanCount && mdpAddrNonStrict && mdpAddrMiss
+  mdpAddrPerf.replayStrictHit := replayMdpAddrCanCount && mdpAddrStrict && mdpAddrHit
+  mdpAddrPerf.replayStrictMiss := replayMdpAddrCanCount && mdpAddrStrict && mdpAddrMiss
   // TODO: remove useless fields after old LoadUnit is removed
   lqWrite.uop := uop
   lqWrite.uop.exceptionVec extendFrom exceptionVec
@@ -1599,6 +1627,7 @@ class LoadUnitS3(param: ExeUnitParams)(
   io.exceptionInfo.bits := exceptionInfo
 
   io.cancel := cancel
+  io.mdpAddrPerf := mdpAddrPerf
 
   io.debugInfo.isReplayFast := pipeIn.valid && !kill && doFastReplay
   io.debugInfo.isReplaySlow := lqWriteValid && cause.asUInt.orR
@@ -1820,6 +1849,7 @@ class LoadUnitIO(val param: ExeUnitParams)(implicit p: Parameters) extends XSBun
   // IQ wakeup and load cancel
   val wakeup = ValidIO(new MemWakeUpBundle)
   val cancel = Output(Bool())
+  val mdpAddrPerf = Output(new MdpAddrPerf)
   // Exception info
   val exceptionInfo = ValidIO(new MemExceptionInfo)
   // Data forwarding and bypass
@@ -1953,6 +1983,7 @@ class NewLoadUnit(val param: ExeUnitParams)(implicit p: Parameters) extends XSMo
   io.rawNukeQuery.revokeLastLastCycle := s3.io.revokeLastLastCycle
   io.rollback := s3.io.rollback
   io.cancel := s3.io.cancel
+  io.mdpAddrPerf := s3.io.mdpAddrPerf
   io.exceptionInfo := s3.io.exceptionInfo
   s3.io.csrCtrl := io.csrCtrl
 

@@ -96,6 +96,10 @@ class LoadPipeBundle(
   val addrInvalidSqIdx = Option.when(param.replayToLRQ)(new SqPtr)
   val tlbId = Option.when(param.replayToLRQ)(UInt(log2Up(loadfiltersize).W))
   val tlbFull = Option.when(param.replayToLRQ)(Bool())
+  val mdpAddrValid = Option.when(param.replayToLRQ)(Bool())
+  val mdpAddrStrict = Option.when(param.replayToLRQ)(Bool())
+  val mdpAddrHit = Option.when(param.replayToLRQ)(Bool())
+  val isCMAReplay = Option.when(param.replayToLRQ)(Bool())
 
   val forwardDChannel = Option.when(param.replayFromLRQ)(Bool())
   val uncacheReplay = Option.when(param.replayFromLRQ)(Bool())

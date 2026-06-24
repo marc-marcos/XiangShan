@@ -1573,6 +1573,44 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
   XSPerfHistogram("store_iq_deq_count", stDeqCount, true.B, 0, StAddrCnt + 1)
   XSPerfAccumulate("ls_iq_deq_count", iqDeqCount)
 
+  val mdpAddrPerf = newLoadUnits.map(_.io.mdpAddrPerf)
+  val loadunitMdpNonStrictAddrHit = PopCount(mdpAddrPerf.map(_.loadunitNonStrictHit))
+  val loadunitMdpNonStrictAddrMiss = PopCount(mdpAddrPerf.map(_.loadunitNonStrictMiss))
+  val loadunitMdpStrictAddrHit = PopCount(mdpAddrPerf.map(_.loadunitStrictHit))
+  val loadunitMdpStrictAddrMiss = PopCount(mdpAddrPerf.map(_.loadunitStrictMiss))
+  val replayMdpNonStrictAddrHit = PopCount(mdpAddrPerf.map(_.replayNonStrictHit))
+  val replayMdpNonStrictAddrMiss = PopCount(mdpAddrPerf.map(_.replayNonStrictMiss))
+  val replayMdpStrictAddrHit = PopCount(mdpAddrPerf.map(_.replayStrictHit))
+  val replayMdpStrictAddrMiss = PopCount(mdpAddrPerf.map(_.replayStrictMiss))
+  val loadunitMdpAddrHit = loadunitMdpNonStrictAddrHit +& loadunitMdpStrictAddrHit
+  val loadunitMdpAddrMiss = loadunitMdpNonStrictAddrMiss +& loadunitMdpStrictAddrMiss
+  val replayMdpAddrHit = replayMdpNonStrictAddrHit +& replayMdpStrictAddrHit
+  val replayMdpAddrMiss = replayMdpNonStrictAddrMiss +& replayMdpStrictAddrMiss
+  val mdpSuccessNonStrictAddrHit = loadunitMdpNonStrictAddrHit +& replayMdpNonStrictAddrHit
+  val mdpSuccessNonStrictAddrMiss = loadunitMdpNonStrictAddrMiss +& replayMdpNonStrictAddrMiss
+  val mdpSuccessStrictAddrHit = loadunitMdpStrictAddrHit +& replayMdpStrictAddrHit
+  val mdpSuccessStrictAddrMiss = loadunitMdpStrictAddrMiss +& replayMdpStrictAddrMiss
+  val mdpSuccessAddrHit = mdpSuccessNonStrictAddrHit +& mdpSuccessStrictAddrHit
+  val mdpSuccessAddrMiss = mdpSuccessNonStrictAddrMiss +& mdpSuccessStrictAddrMiss
+  XSPerfAccumulate("loadunit_mdp_success_addr_hit", loadunitMdpAddrHit)
+  XSPerfAccumulate("loadunit_mdp_success_addr_miss", loadunitMdpAddrMiss)
+  XSPerfAccumulate("loadunit_mdp_success_non_strict_addr_hit", loadunitMdpNonStrictAddrHit)
+  XSPerfAccumulate("loadunit_mdp_success_non_strict_addr_miss", loadunitMdpNonStrictAddrMiss)
+  XSPerfAccumulate("loadunit_mdp_success_strict_addr_hit", loadunitMdpStrictAddrHit)
+  XSPerfAccumulate("loadunit_mdp_success_strict_addr_miss", loadunitMdpStrictAddrMiss)
+  XSPerfAccumulate("replay_mdp_success_addr_hit", replayMdpAddrHit)
+  XSPerfAccumulate("replay_mdp_success_addr_miss", replayMdpAddrMiss)
+  XSPerfAccumulate("replay_mdp_success_non_strict_addr_hit", replayMdpNonStrictAddrHit)
+  XSPerfAccumulate("replay_mdp_success_non_strict_addr_miss", replayMdpNonStrictAddrMiss)
+  XSPerfAccumulate("replay_mdp_success_strict_addr_hit", replayMdpStrictAddrHit)
+  XSPerfAccumulate("replay_mdp_success_strict_addr_miss", replayMdpStrictAddrMiss)
+  XSPerfAccumulate("mdp_success_addr_hit", mdpSuccessAddrHit)
+  XSPerfAccumulate("mdp_success_addr_miss", mdpSuccessAddrMiss)
+  XSPerfAccumulate("mdp_success_non_strict_addr_hit", mdpSuccessNonStrictAddrHit)
+  XSPerfAccumulate("mdp_success_non_strict_addr_miss", mdpSuccessNonStrictAddrMiss)
+  XSPerfAccumulate("mdp_success_strict_addr_hit", mdpSuccessStrictAddrHit)
+  XSPerfAccumulate("mdp_success_strict_addr_miss", mdpSuccessStrictAddrMiss)
+
   val pfevent = Module(new PFEvent)
   pfevent.io.distribute_csr := csrCtrl.distribute_csr
   val csrevents = pfevent.io.hpmevent.slice(16,24)
