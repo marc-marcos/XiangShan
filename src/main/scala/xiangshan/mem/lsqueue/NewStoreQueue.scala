@@ -571,18 +571,6 @@ abstract class NewStoreQueueBase(implicit p: Parameters) extends LSQModule {
         !(s2PaddrMatchVec & s2CanForward & s2SelectOH).orR, // if forward valid, select entry's paddr must match
         (s2PaddrMatchVec & s2CanForward).orR) // if forward invalid, must no paddr match
 
-      val perfS2MdpCandidate = Mux(s2LoadWaitStrict, s2AgeMask, s2AgeMask & s2StoreSetHitVec)
-      val perfS2MdpMaskMatchVec = VecInit(io.dataEntriesIn.map { dataEntry =>
-        val byteSelectOffset = s2LoadStart - dataEntry.byteStart
-        val selectMask = (0 until VLENB).map(j =>
-          j.U -> rotateByteRight(dataEntry.byteMask, j)
-        )
-        val outMask = ParallelLookUp(byteSelectOffset, selectMask) & s2LoadMaskEnd
-        outMask.orR
-      }).asUInt
-      val perfS2MdpAddrMatch = perfS2MdpCandidate & s2OverlapMask & s2PaddrMatchVec & perfS2MdpMaskMatchVec &
-        addrValidVec.asUInt & allocatedVec.asUInt
-
       val s2SelectData         = (0 until VLENB).map(j =>
         j.U -> rotateByteRight(s2SelectDataEntry.data, j * 8)
       )
@@ -619,12 +607,18 @@ abstract class NewStoreQueueBase(implicit p: Parameters) extends LSQModule {
       s2Resp.bits.dataInvalid.bits := s2DataInvalidSqIdx
       s2Resp.bits.addrInvalid.valid := s2HasAddrInvalid // maby can't select a entry
       s2Resp.bits.addrInvalid.bits := Mux(s2LoadWaitStrict, s2WaitStrictSqIdx, s2AddrInvalidSqIdx)
-      s2Resp.bits.perfMdpAddrValid     := s2Valid && perfS2MdpCandidate.orR
-      s2Resp.bits.perfMdpAddrStrict    := s2LoadWaitStrict
-      s2Resp.bits.perfMdpAddrHit       := perfS2MdpAddrMatch.orR
       s2Resp.bits.forwardInvalid   := !s2SafeForward || s2Cross4KPage // do not support cross page forward.
       s2Resp.bits.matchInvalid     := s2PaddrNoMatch && !s2Cross4KPage && s2SafeForward // if cross Page/multi match, let load replay.
       s2Resp.valid                 := s2Valid
+
+      // Perf-only response fields
+      val perfS2MdpCandidate = Mux(s2LoadWaitStrict, s2AgeMask, s2AgeMask & s2StoreSetHitVec)
+      val perfS2MdpSelectedAddrMatch = (perfS2MdpCandidate & s2OverlapMask & s2PaddrMatchVec &
+        addrValidVec.asUInt & allocatedVec.asUInt & s2SelectOH).orR
+      val perfS2MdpForwardMaskMatch = s2ForwardValid && s2FinalMask.orR
+      s2Resp.bits.perfMdpAddrValid  := s2Valid && perfS2MdpCandidate.orR
+      s2Resp.bits.perfMdpAddrStrict := s2LoadWaitStrict
+      s2Resp.bits.perfMdpAddrHit    := perfS2MdpSelectedAddrMatch && perfS2MdpForwardMaskMatch
 
       if(debugEn) {
         dontTouch(s1OverlapMask)

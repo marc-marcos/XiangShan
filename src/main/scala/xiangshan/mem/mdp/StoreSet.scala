@@ -397,14 +397,12 @@ class LFST(implicit p: Parameters) extends XSModule {
       WireInit(VecInit(Seq(false.B))) // DontCare
     }
     val hitInDispatchBundle = hitInDispatchBundleVec.asUInt.orR
-    val perfNotIssuedStoreCount = PopCount(validVec(io.dispatch.req(i).bits.ssid)) + PopCount(hitInDispatchBundleVec)
     // Check if store set is valid in LFST
     io.dispatch.resp(i).bits.shouldWait := (
         (valid(io.dispatch.req(i).bits.ssid) || hitInDispatchBundle) &&
         io.dispatch.req(i).valid &&
         (!io.dispatch.req(i).bits.isstore || io.csrCtrl.storeset_wait_store)
       ) && !io.csrCtrl.lvpred_disable || io.csrCtrl.no_spec_load
-    io.dispatch.resp(i).bits.perfNotIssuedStoreGt1 := perfNotIssuedStoreCount > 1.U
     io.dispatch.resp(i).bits.robIdx := robIdxVec(io.dispatch.req(i).bits.ssid)(allocPtr(io.dispatch.req(i).bits.ssid)-1.U)
     if(i > 0){
       (0 until i).map(j =>
@@ -413,6 +411,9 @@ class LFST(implicit p: Parameters) extends XSModule {
         }
       )
     }
+
+    val perfNotIssuedStoreCount = PopCount(validVec(io.dispatch.req(i).bits.ssid)) + PopCount(hitInDispatchBundleVec)
+    io.dispatch.resp(i).bits.perfNotIssuedStoreGt1 := perfNotIssuedStoreCount > 1.U
   }
 
   // when store is issued, mark it as invalid
