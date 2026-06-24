@@ -572,7 +572,16 @@ abstract class NewStoreQueueBase(implicit p: Parameters) extends LSQModule {
         (s2PaddrMatchVec & s2CanForward).orR) // if forward invalid, must no paddr match
 
       val s2MdpCandidate = Mux(s2LoadWaitStrict, s2AgeMask, s2AgeMask & s2StoreSetHitVec)
-      val s2MdpAddrMatch = s2MdpCandidate & s2OverlapMask & s2PaddrMatchVec & addrValidVec.asUInt & allocatedVec.asUInt
+      val s2MdpMaskMatchVec = VecInit(io.dataEntriesIn.map { dataEntry =>
+        val byteSelectOffset = s2LoadStart - dataEntry.byteStart
+        val selectMask = (0 until VLENB).map(j =>
+          j.U -> rotateByteRight(dataEntry.byteMask, j)
+        )
+        val outMask = ParallelLookUp(byteSelectOffset, selectMask) & s2LoadMaskEnd
+        outMask.orR
+      }).asUInt
+      val s2MdpAddrMatch = s2MdpCandidate & s2OverlapMask & s2PaddrMatchVec & s2MdpMaskMatchVec &
+        addrValidVec.asUInt & allocatedVec.asUInt
 
       val s2SelectData         = (0 until VLENB).map(j =>
         j.U -> rotateByteRight(s2SelectDataEntry.data, j * 8)
