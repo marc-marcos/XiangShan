@@ -871,7 +871,7 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
     io.lfst.req(i).bits.isstore := isStore(i)
     io.lfst.req(i).bits.ssid := updatedUop(i).ssid
     io.lfst.req(i).bits.robIdx := updatedUop(i).robIdx // speculatively assigned in rename
-    io.lfst.req(i).bits.strictPred := fromRename(i).bits.loadWaitStrict
+    io.lfst.req(i).bits.perfStrictPred := fromRename(i).bits.loadWaitStrict
 
     // override load delay ctrl signal with store set result
     if(StoreSetEnable) {

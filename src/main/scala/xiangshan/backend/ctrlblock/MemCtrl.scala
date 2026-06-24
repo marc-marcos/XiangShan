@@ -26,11 +26,11 @@ class MemCtrl(params: BackendParams)(implicit p: Parameters) extends XSModule {
   lfst.io.csrCtrl <> RegNext(io.csrCtrl)
   lfst.io.dispatch <> io.dispatchLFSTio
 
-  val ssitStrictPredLfstNotIssuedStoreGt1 = PopCount((0 until RenameWidth).map(i =>
-    io.dispatchLFSTio.req(i).valid && io.dispatchLFSTio.req(i).bits.strictPred &&
-      io.dispatchLFSTio.resp(i).valid && io.dispatchLFSTio.resp(i).bits.notIssuedStoreGt1
+  val perfSsitStrictPredLfstNotIssuedStoreGt1 = PopCount((0 until RenameWidth).map(i =>
+    io.dispatchLFSTio.req(i).valid && io.dispatchLFSTio.req(i).bits.perfStrictPred &&
+      io.dispatchLFSTio.resp(i).valid && io.dispatchLFSTio.resp(i).bits.perfNotIssuedStoreGt1
   ))
-  XSPerfAccumulate("ssit_strict_pred_lfst_not_issued_store_gt1", ssitStrictPredLfstNotIssuedStoreGt1)
+  XSPerfAccumulate("ssit_strict_pred_lfst_not_issued_store_gt1", perfSsitStrictPredLfstNotIssuedStoreGt1)
 
 //  io.waitTable2Rename := waittable.io.rdata
   io.waitTable2Rename := DontCare

@@ -122,16 +122,16 @@ object Bundles {
     val matchInvalid = Bool()
     val addrInvalid = Valid(new SqPtr)
     val dataInvalid = Valid(new SqPtr)
-    val mdpAddrValid = Bool()
-    val mdpAddrStrict = Bool()
-    val mdpAddrHit = Bool()
+    val perfMdpAddrValid = Bool()
+    val perfMdpAddrStrict = Bool()
+    val perfMdpAddrHit = Bool()
   }
 
-  class MdpAddrPerf(implicit p: Parameters) extends XSBundle {
-    val loadunitNonStrictHit = Bool()
-    val loadunitNonStrictMiss = Bool()
-    val loadunitStrictHit = Bool()
-    val loadunitStrictMiss = Bool()
+  class PerfMdpAddr(implicit p: Parameters) extends XSBundle {
+    val loadUnitNonStrictHit = Bool()
+    val loadUnitNonStrictMiss = Bool()
+    val loadUnitStrictHit = Bool()
+    val loadUnitStrictMiss = Bool()
     val replayNonStrictHit = Bool()
     val replayNonStrictMiss = Bool()
     val replayStrictHit = Bool()
