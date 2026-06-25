@@ -1513,10 +1513,10 @@ class LoadUnitS3(param: ExeUnitParams)(
   val perfMdpAddrStrict = Mux(s4HeadValid, s4Head.perfMdpAddrStrict.get, in.perfMdpAddrStrict.get)
   val perfMdpAddrHit = Mux(s4HeadValid, s4Head.perfMdpAddrHit.get, in.perfMdpAddrHit.get)
   val perfIsCmaReplay = Mux(s4HeadValid, s4Head.perfIsCmaReplay.get, in.perfIsCmaReplay.get)
-  val perfMdpAddrCanCount = lqWriteValid && !lqWriteNeedReplay && perfMdpAddrValid
+  val perfMdpAddrCanCount = lqWriteValid && !lqWriteNeedReplay
   val perfMdpAddrNonStrict = !perfMdpAddrStrict
   val perfMdpAddrMiss = !perfMdpAddrHit
-  val perfLoadUnitMdpAddrCanCount = perfMdpAddrCanCount && !perfIsReplayExec
+  val perfLoadUnitMdpAddrCanCount = perfMdpAddrCanCount && !perfIsReplayExec && perfMdpAddrValid
   val perfReplayMdpAddrCanCount = perfMdpAddrCanCount && perfIsReplayExec && perfIsCmaReplay
   val perfMdpAddr = Wire(new PerfMdpAddr)
   perfMdpAddr.loadUnitNonStrictHit := perfLoadUnitMdpAddrCanCount && perfMdpAddrNonStrict && perfMdpAddrHit
