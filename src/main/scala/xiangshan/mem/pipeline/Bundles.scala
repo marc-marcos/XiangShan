@@ -90,6 +90,7 @@ class LoadPipeBundle(
   val replayQueueIdx = Option.when(param.replayFromToLRQ)(UInt(log2Up(LoadQueueReplaySize+1).W)) // valid when `entrance` is replay
   val cause = Option.when(param.replayFromToLRQ)(Vec(LoadReplayCauses.allCauses, Bool()))
   val fastReplayNukeFirst = Option.when(param.hasS2PreProcess)(Bool())// When stld_nuke and storeset hit occur simultaneously, stld_nuke should be handled first.
+  val perfIsCmaReplay = Option.when(param.hasS2PreProcess)(Bool())
 
   val handledByMSHR = Option.when(param.replayToLRQ)(Bool())
   val dataInvalidSqIdx = Option.when(param.replayToLRQ)(new SqPtr)
@@ -99,7 +100,6 @@ class LoadPipeBundle(
   val perfMdpAddrValid = Option.when(param.replayToLRQ)(Bool())
   val perfMdpAddrStrict = Option.when(param.replayToLRQ)(Bool())
   val perfMdpAddrHit = Option.when(param.replayToLRQ)(Bool())
-  val perfIsCmaReplay = Option.when(param.replayToLRQ)(Bool())
 
   val forwardDChannel = Option.when(param.replayFromLRQ)(Bool())
   val uncacheReplay = Option.when(param.replayFromLRQ)(Bool())

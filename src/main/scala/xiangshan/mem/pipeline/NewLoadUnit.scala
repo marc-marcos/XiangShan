@@ -729,6 +729,7 @@ class LoadUnitS1(param: ExeUnitParams)(
   stageInfo.cause.get := 0.U.asTypeOf(stageInfo.cause.get)
   stageInfo.cause.get(LoadReplayCauses.C_NK) := nuke
   stageInfo.fastReplayNukeFirst.get := fastReplayNukeFirst
+  stageInfo.perfIsCmaReplay.get := LoadEntrance.isReplay(entrance) && in.cause.get(LoadReplayCauses.C_MA)
   // update trigger info
   stageInfo.vecVaddrOffset.get := vecVaddrOffset
   stageInfo.vecTriggerMask.get := vecTriggerMask
@@ -880,7 +881,7 @@ class LoadUnitS2(param: ExeUnitParams)(
   val isMMIOReplay = in.isMMIOReplay()
   val isNCReplay = in.isNCReplay()
   val isUncacheReplay = in.isUncacheReplay()
-  val perfIsCmaReplay = LoadEntrance.isReplay(entrance) && in.cause.get(LoadReplayCauses.C_MA)
+  val perfIsCmaReplay = in.perfIsCmaReplay.get
   val isPrefetch = accessType.isPrefetch()
   val isHwPrefetch = accessType.isHwPrefetch()
   val isSwPrefetch = accessType.isSwPrefetch()
