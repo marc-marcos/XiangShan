@@ -1582,6 +1582,7 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
   val perfReplayMdpNonStrictAddrMiss = PopCount(perfMdpAddr.map(_.replayNonStrictMiss))
   val perfReplayMdpStrictAddrHit = PopCount(perfMdpAddr.map(_.replayStrictHit))
   val perfReplayMdpStrictAddrMiss = PopCount(perfMdpAddr.map(_.replayStrictMiss))
+  val perfMdpWaitStoreRetired = PopCount(perfMdpAddr.map(_.waitStoreRetired))
   val perfLoadUnitMdpAddrHit = perfLoadUnitMdpNonStrictAddrHit +& perfLoadUnitMdpStrictAddrHit
   val perfLoadUnitMdpAddrMiss = perfLoadUnitMdpNonStrictAddrMiss +& perfLoadUnitMdpStrictAddrMiss
   val perfReplayMdpAddrHit = perfReplayMdpNonStrictAddrHit +& perfReplayMdpStrictAddrHit
@@ -1610,6 +1611,7 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
   XSPerfAccumulate("mdp_success_non_strict_addr_miss", perfMdpSuccessNonStrictAddrMiss)
   XSPerfAccumulate("mdp_success_strict_addr_hit", perfMdpSuccessStrictAddrHit)
   XSPerfAccumulate("mdp_success_strict_addr_miss", perfMdpSuccessStrictAddrMiss)
+  XSPerfAccumulate("mdp_wait_store_retired", perfMdpWaitStoreRetired)
 
   val pfevent = Module(new PFEvent)
   pfevent.io.distribute_csr := csrCtrl.distribute_csr

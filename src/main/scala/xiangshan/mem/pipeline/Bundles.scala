@@ -100,6 +100,7 @@ class LoadPipeBundle(
   val perfMdpAddrValid = Option.when(param.replayToLRQ)(Bool())
   val perfMdpAddrStrict = Option.when(param.replayToLRQ)(Bool())
   val perfMdpAddrHit = Option.when(param.replayToLRQ)(Bool())
+  val perfWaitStoreRetired = Option.when(param.replayToLRQ)(Bool())
 
   val forwardDChannel = Option.when(param.replayFromLRQ)(Bool())
   val uncacheReplay = Option.when(param.replayFromLRQ)(Bool())

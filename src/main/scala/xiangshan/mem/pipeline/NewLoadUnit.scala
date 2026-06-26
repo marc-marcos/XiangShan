@@ -1139,6 +1139,7 @@ class LoadUnitS2(param: ExeUnitParams)(
   stageInfo.perfMdpAddrValid.get := io.sqForwardResp.valid && io.sqForwardResp.bits.perfMdpAddrValid
   stageInfo.perfMdpAddrStrict.get := io.sqForwardResp.bits.perfMdpAddrStrict
   stageInfo.perfMdpAddrHit.get := io.sqForwardResp.bits.perfMdpAddrHit
+  stageInfo.perfWaitStoreRetired.get := io.sqForwardResp.valid && io.sqForwardResp.bits.perfWaitStoreRetired
   stageInfo.perfIsCmaReplay.get := perfIsCmaReplay
   // Pre-process for s3
   stageInfo.troubleMaker.get := troubleMaker
@@ -1513,12 +1514,15 @@ class LoadUnitS3(param: ExeUnitParams)(
   val perfMdpAddrValid = Mux(s4HeadValid, s4Head.perfMdpAddrValid.get, in.perfMdpAddrValid.get)
   val perfMdpAddrStrict = Mux(s4HeadValid, s4Head.perfMdpAddrStrict.get, in.perfMdpAddrStrict.get)
   val perfMdpAddrHit = Mux(s4HeadValid, s4Head.perfMdpAddrHit.get, in.perfMdpAddrHit.get)
+  val perfWaitStoreRetired = Mux(s4HeadValid, s4Head.perfWaitStoreRetired.get, in.perfWaitStoreRetired.get)
   val perfIsCmaReplay = Mux(s4HeadValid, s4Head.perfIsCmaReplay.get, in.perfIsCmaReplay.get)
   val perfMdpAddrCanCount = lqWriteValid && !lqWriteNeedReplay
   val perfMdpAddrNonStrict = !perfMdpAddrStrict
   val perfMdpAddrMiss = !perfMdpAddrHit
   val perfLoadUnitMdpAddrCanCount = perfMdpAddrCanCount && !perfIsReplayExec && perfMdpAddrValid
   val perfReplayMdpAddrCanCount = perfMdpAddrCanCount && perfIsReplayExec && perfIsCmaReplay
+  val perfWaitStoreRetiredCanCount = perfMdpAddrCanCount && perfWaitStoreRetired &&
+    (!perfIsReplayExec || perfIsCmaReplay)
   val perfMdpAddr = Wire(new PerfMdpAddr)
   perfMdpAddr.loadUnitNonStrictHit := perfLoadUnitMdpAddrCanCount && perfMdpAddrNonStrict && perfMdpAddrHit
   perfMdpAddr.loadUnitNonStrictMiss := perfLoadUnitMdpAddrCanCount && perfMdpAddrNonStrict && perfMdpAddrMiss
@@ -1528,6 +1532,7 @@ class LoadUnitS3(param: ExeUnitParams)(
   perfMdpAddr.replayNonStrictMiss := perfReplayMdpAddrCanCount && perfMdpAddrNonStrict && perfMdpAddrMiss
   perfMdpAddr.replayStrictHit := perfReplayMdpAddrCanCount && perfMdpAddrStrict && perfMdpAddrHit
   perfMdpAddr.replayStrictMiss := perfReplayMdpAddrCanCount && perfMdpAddrStrict && perfMdpAddrMiss
+  perfMdpAddr.waitStoreRetired := perfWaitStoreRetiredCanCount
 
   // Writeback to VLMergeBuffer
   val vecldoutValid = pipeIn.valid && !kill && shouldWriteback && isVector && endPipe

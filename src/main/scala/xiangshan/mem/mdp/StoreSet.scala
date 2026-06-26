@@ -464,7 +464,7 @@ class LFST(implicit p: Parameters) extends XSModule {
   }
 
   XSPerfAccumulate("LFST_Overflow_Count", PopCount(overflowVec))
-  XSPerfAccumulate("lfst_strict_pred_not_issued_store_gt1", PopCount(io.dispatch.resp.zip(io.dispatch.req).map {
+  XSPerfAccumulate("lfst_strict_pred_not_issued_store_greater1", PopCount(io.dispatch.resp.zip(io.dispatch.req).map {
     case (resp, req) => resp.valid && req.bits.perfStrictPred && resp.bits.perfNotIssuedStoreGt1
   }))
 }

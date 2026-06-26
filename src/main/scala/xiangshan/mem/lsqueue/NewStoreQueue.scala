@@ -521,8 +521,6 @@ abstract class NewStoreQueueBase(implicit p: Parameters) extends LSQModule {
       val s2DataInvalidSqIdx = RegEnable(s1DataInvalidSqIdx, s1Valid)
       val s2AddrInvalidSqIdx = RegEnable(s1AddrInvalidSqIdx, s1Valid)
       val s2LoadWaitStrict   = RegEnable(s1LoadWaitStrict, s1Valid)
-      val s2StoreSetHitVec   = RegEnable(s1StoreSetHitVec.asUInt, s1Valid)
-      val s2AgeMask          = RegEnable(s1AgeMaskLow | s1AgeMaskHigh, s1Valid)
       val s2OverlapMask      = RegEnable(s1OverlapMask, s1Valid)
       val s2WaitStrictSqIdx  = RegEnable(s1LoadSqIdx - 1.U, s1Valid)
       val s2MultiMatch       = RegEnable(s1MultiMatch, s1Valid)
@@ -612,13 +610,27 @@ abstract class NewStoreQueueBase(implicit p: Parameters) extends LSQModule {
       s2Resp.valid                 := s2Valid
 
       // Perf-only response fields
+      val perfS0HasWaitStore = lfstEnable && s0Req.bits.loadWaitBit
+      val perfS0WaitStoreHitVec = VecInit((0 until StoreQueueSize).map(j =>
+        perfS0HasWaitStore && io.dataEntriesIn(j).uop.robIdx === s0Req.bits.waitForRobIdx)).asUInt
+
+      val perfS1WaitStoreHitVec = RegEnable(perfS0WaitStoreHitVec, s0Valid)
+      val perfS1HasWaitStore = RegEnable(perfS0HasWaitStore, s0Valid)
+      val perfS1WaitStoreRetired = s1Valid && perfS1HasWaitStore &&
+        !(perfS1WaitStoreHitVec & allocatedVec.asUInt).orR
+
+      val s2AgeMask = RegEnable(s1AgeMaskLow | s1AgeMaskHigh, s1Valid)
+      val s2StoreSetHitVec = RegEnable(s1StoreSetHitVec.asUInt, s1Valid)
+      val perfS2WaitStoreRetired = RegEnable(perfS1WaitStoreRetired, s1Valid)
       val perfS2MdpCandidate = Mux(s2LoadWaitStrict, s2AgeMask, s2AgeMask & s2StoreSetHitVec)
       val perfS2MdpSelectedAddrMatch = (perfS2MdpCandidate & s2OverlapMask & s2PaddrMatchVec &
         addrValidVec.asUInt & allocatedVec.asUInt & s2SelectOH).orR
       val perfS2MdpForwardMaskMatch = s2ForwardValid && s2FinalMask.orR
+
       s2Resp.bits.perfMdpAddrValid  := s2Valid && perfS2MdpCandidate.orR
       s2Resp.bits.perfMdpAddrStrict := s2LoadWaitStrict
       s2Resp.bits.perfMdpAddrHit    := perfS2MdpSelectedAddrMatch && perfS2MdpForwardMaskMatch
+      s2Resp.bits.perfWaitStoreRetired := s2Valid && perfS2WaitStoreRetired
 
       if(debugEn) {
         dontTouch(s1OverlapMask)
