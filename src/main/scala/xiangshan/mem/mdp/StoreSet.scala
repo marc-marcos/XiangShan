@@ -267,7 +267,7 @@ class SSIT(implicit p: Parameters) extends XSModule {
         update_st_ssit_entry(
           pc = s2_mempred_update_req.stpc,
           valid = true.B,
-          ssid = s2_ldSsidAllocate,
+          ssid = s2_loadOldSSID,
           strict = false.B
         )
       }
@@ -277,7 +277,7 @@ class SSIT(implicit p: Parameters) extends XSModule {
         update_ld_ssit_entry(
           pc = s2_mempred_update_req.ldpc,
           valid = true.B,
-          ssid = s2_stSsidAllocate,
+          ssid = s2_storeOldSSID,
           strict = false.B
         )
       }
