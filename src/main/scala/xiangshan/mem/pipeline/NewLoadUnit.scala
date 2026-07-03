@@ -1534,6 +1534,40 @@ class LoadUnitS3(param: ExeUnitParams)(
   perfMdpAddr.replayStrictMiss := perfReplayMdpAddrCanCount && perfMdpAddrStrict && perfMdpAddrMiss
   perfMdpAddr.waitStoreRetired := perfWaitStoreRetiredCanCount
 
+  // StoreSet ChiselDB trace
+  val storeSetLoadUnitCheckHartId = p(XSCoreParamsKey).HartId
+  val isWriteStoreSetLoadUnitCheckTable =
+    Constantin.createRecord(s"isWriteStoreSetLoadUnitCheckTable$storeSetLoadUnitCheckHartId")
+  val storeSetLoadUnitCheckTable = ChiselDB.createTable(
+    s"StoreSetLoadUnitCheckDB$storeSetLoadUnitCheckHartId",
+    new StoreSetLoadUnitCheckDBEntry,
+    basicDB = true
+  )
+  val storeSetLoadUnitCheckEntry = Wire(new StoreSetLoadUnitCheckDBEntry)
+  val storeSetLoadUnitCheckUop = Mux(s4HeadValid, s4Head.uop, uop)
+  val storeSetLoadUnitCheckAddrInvalidSqIdx = Mux(s4HeadValid, s4Head.addrInvalidSqIdx.get, in.addrInvalidSqIdx.get)
+  val storeSetLoadUnitCheckStoreSqIdxValid = lqWriteCause(LoadReplayCauses.C_MA)
+  storeSetLoadUnitCheckEntry.timeCnt := GTimer()
+  storeSetLoadUnitCheckEntry.robIdx := storeSetLoadUnitCheckUop.robIdx.value
+  storeSetLoadUnitCheckEntry.foldPc := storeSetLoadUnitCheckUop.foldpc
+  storeSetLoadUnitCheckEntry.ssid := storeSetLoadUnitCheckUop.ssid
+  storeSetLoadUnitCheckEntry.loadSqIdx := storeSetLoadUnitCheckUop.sqIdx.value
+  storeSetLoadUnitCheckEntry.storeSqIdx := storeSetLoadUnitCheckAddrInvalidSqIdx.value
+  storeSetLoadUnitCheckEntry.loadWaitBit := storeSetLoadUnitCheckUop.loadWaitBit
+  storeSetLoadUnitCheckEntry.loadWaitStrict := storeSetLoadUnitCheckUop.loadWaitStrict
+  storeSetLoadUnitCheckEntry.mdpAddrValid := perfMdpAddrValid
+  storeSetLoadUnitCheckEntry.mdpAddrStrict := perfMdpAddrStrict
+  storeSetLoadUnitCheckEntry.mdpAddrHit := perfMdpAddrHit
+  storeSetLoadUnitCheckEntry.storeSqIdxValid := storeSetLoadUnitCheckStoreSqIdxValid
+  storeSetLoadUnitCheckTable.log(
+    data = storeSetLoadUnitCheckEntry,
+    en = isWriteStoreSetLoadUnitCheckTable.orR && lqWriteValid &&
+      storeSetLoadUnitCheckUop.storeSetHit && storeSetLoadUnitCheckUop.loadWaitBit,
+    site = s"${param.name}_StoreSetLoadUnitCheck$storeSetLoadUnitCheckHartId",
+    clock = clock,
+    reset = reset
+  )
+
   // Writeback to VLMergeBuffer
   val vecldoutValid = pipeIn.valid && !kill && shouldWriteback && isVector && endPipe
   val vecldout = Wire(new VecPipelineFeedbackIO(isVStore = false))

@@ -314,6 +314,54 @@ class SSIT(implicit p: Parameters) extends XSModule {
     data_array.io.wen(SSIT_UPDATE_STORE_WRITE_PORT) := false.B
   }
 
+  // StoreSet ChiselDB trace
+  val storeSetUpdateHartId = p(XSCoreParamsKey).HartId
+  val isWriteStoreSetUpdateTable = Constantin.createRecord(s"isWriteStoreSetUpdateTable$storeSetUpdateHartId")
+  val storeSetUpdateTable = ChiselDB.createTable(s"StoreSetUpdateDB$storeSetUpdateHartId", new StoreSetUpdateDBEntry, basicDB = true)
+
+  val storeSetUpdateTypeLxsx = 0.U(3.W)
+  val storeSetUpdateTypeLysx = 1.U(3.W)
+  val storeSetUpdateTypeLxsy = 2.U(3.W)
+  val storeSetUpdateTypeLysyMerge = 3.U(3.W)
+  val storeSetUpdateTypeSameSsidStrict = 4.U(3.W)
+
+  val storeSetUpdateType = Wire(UInt(3.W))
+  storeSetUpdateType := MuxCase(storeSetUpdateTypeLxsx, Seq(
+    (s2_loadAssigned && !s2_storeAssigned) -> storeSetUpdateTypeLysx,
+    (!s2_loadAssigned && s2_storeAssigned) -> storeSetUpdateTypeLxsy,
+    (s2_loadAssigned && s2_storeAssigned && !s2_ssidIsSame) -> storeSetUpdateTypeLysyMerge,
+    (s2_loadAssigned && s2_storeAssigned && s2_ssidIsSame) -> storeSetUpdateTypeSameSsidStrict
+  ))
+
+  val storeSetNewLoadSSID = MuxCase(s2_allocSsid, Seq(
+    (s2_loadAssigned && !s2_storeAssigned) -> s2_loadOldSSID,
+    (!s2_loadAssigned && s2_storeAssigned) -> s2_storeOldSSID,
+    (s2_loadAssigned && s2_storeAssigned) -> s2_winnerSSID
+  ))
+  val storeSetNewLoadStrict = MuxCase(false.B, Seq(
+    (s2_loadAssigned && !s2_storeAssigned) -> s2_loadStrict,
+    (s2_loadAssigned && s2_storeAssigned && s2_ssidIsSame) -> true.B
+  ))
+
+  val storeSetUpdateEntry = Wire(new StoreSetUpdateDBEntry)
+  storeSetUpdateEntry.timeCnt := GTimer()
+  storeSetUpdateEntry.ldFoldPc := s2_mempred_update_req.ldpc
+  storeSetUpdateEntry.stFoldPc := s2_mempred_update_req.stpc
+  storeSetUpdateEntry.loadOldSSID := s2_loadOldSSID
+  storeSetUpdateEntry.storeOldSSID := s2_storeOldSSID
+  storeSetUpdateEntry.loadOldStrict := s2_loadStrict
+  storeSetUpdateEntry.winnerSSID := s2_winnerSSID
+  storeSetUpdateEntry.newLoadSSID := storeSetNewLoadSSID
+  storeSetUpdateEntry.newLoadStrict := storeSetNewLoadStrict
+  storeSetUpdateEntry.updateType := storeSetUpdateType
+  storeSetUpdateTable.log(
+    data = storeSetUpdateEntry,
+    en = isWriteStoreSetUpdateTable.orR && s2_mempred_update_req_valid,
+    site = s"SSIT$storeSetUpdateHartId",
+    clock = clock,
+    reset = reset
+  )
+
   XSPerfAccumulate("ssit_update_lxsx", s2_mempred_update_req_valid && !s2_loadAssigned && !s2_storeAssigned)
   XSPerfAccumulate("ssit_update_lysx", s2_mempred_update_req_valid && s2_loadAssigned && !s2_storeAssigned)
   XSPerfAccumulate("ssit_update_lxsy", s2_mempred_update_req_valid && !s2_loadAssigned && s2_storeAssigned)
