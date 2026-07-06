@@ -902,7 +902,6 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
 
   // StoreSet ChiselDB trace
   val storeSetPredHartId = p(XSCoreParamsKey).HartId
-  val isWriteStoreSetPredTable = Constantin.createRecord(s"isWriteStoreSetPredTable$storeSetPredHartId")
   val storeSetPredTable = ChiselDB.createTable(s"StoreSetPredDB$storeSetPredHartId", new StoreSetPredDBEntry, basicDB = true)
   for (i <- 0 until RenameWidth) {
     val storeSetPredEntry = Wire(new StoreSetPredDBEntry)
@@ -921,7 +920,7 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with 
 
     storeSetPredTable.log(
       data = storeSetPredEntry,
-      en = isWriteStoreSetPredTable.orR && fromRename(i).fire && updatedUop(i).storeSetHit,
+      en = fromRename(i).fire && updatedUop(i).storeSetHit,
       site = s"Dispatch$storeSetPredHartId",
       clock = clock,
       reset = reset

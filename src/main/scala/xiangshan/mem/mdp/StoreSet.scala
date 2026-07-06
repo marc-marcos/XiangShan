@@ -316,7 +316,6 @@ class SSIT(implicit p: Parameters) extends XSModule {
 
   // StoreSet ChiselDB trace
   val storeSetUpdateHartId = p(XSCoreParamsKey).HartId
-  val isWriteStoreSetUpdateTable = Constantin.createRecord(s"isWriteStoreSetUpdateTable$storeSetUpdateHartId")
   val storeSetUpdateTable = ChiselDB.createTable(s"StoreSetUpdateDB$storeSetUpdateHartId", new StoreSetUpdateDBEntry, basicDB = true)
 
   val storeSetUpdateTypeLxsx = 0.U(3.W)
@@ -356,7 +355,7 @@ class SSIT(implicit p: Parameters) extends XSModule {
   storeSetUpdateEntry.updateType := storeSetUpdateType
   storeSetUpdateTable.log(
     data = storeSetUpdateEntry,
-    en = isWriteStoreSetUpdateTable.orR && s2_mempred_update_req_valid,
+    en = s2_mempred_update_req_valid,
     site = s"SSIT$storeSetUpdateHartId",
     clock = clock,
     reset = reset

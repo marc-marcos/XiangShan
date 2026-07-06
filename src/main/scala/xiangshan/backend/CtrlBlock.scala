@@ -238,7 +238,6 @@ class CtrlBlockImp(
 
   // StoreSet ChiselDB trace
   val storeSetTrainHartId = p(XSCoreParamsKey).HartId
-  val isWriteStoreSetTrainTable = Constantin.createRecord(s"isWriteStoreSetTrainTable$storeSetTrainHartId")
   val storeSetTrainTable = ChiselDB.createTable(s"StoreSetTrainDB$storeSetTrainHartId", new StoreSetTrainDBEntry, basicDB = true)
   val storeSetTrainEntry = Wire(new StoreSetTrainDBEntry)
   storeSetTrainEntry.timeCnt := GTimer()
@@ -246,7 +245,7 @@ class CtrlBlockImp(
   storeSetTrainEntry.stFoldPc := memCtrl.io.memPredUpdate.stpc
   storeSetTrainTable.log(
     data = storeSetTrainEntry,
-    en = isWriteStoreSetTrainTable.orR && memCtrl.io.memPredUpdate.valid,
+    en = memCtrl.io.memPredUpdate.valid,
     site = s"CtrlBlock$storeSetTrainHartId",
     clock = clock,
     reset = reset
