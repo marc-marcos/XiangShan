@@ -1545,9 +1545,11 @@ class LoadUnitS3(param: ExeUnitParams)(
   val storeSetLoadUnitCheckUop = Mux(s4HeadValid, s4Head.uop, uop)
   val storeSetLoadUnitCheckAddrInvalidSqIdx = Mux(s4HeadValid, s4Head.addrInvalidSqIdx.get, in.addrInvalidSqIdx.get)
   val storeSetLoadUnitCheckStoreSqIdxValid = lqWriteCause(LoadReplayCauses.C_MA)
+  val storeSetLoadUnitCheckFoldPc =
+    XORFold(storeSetLoadUnitCheckUop.pc(VAddrBits - 1, 1), MemPredPCWidth)
   storeSetLoadUnitCheckEntry.timeCnt := GTimer()
   storeSetLoadUnitCheckEntry.robIdx := storeSetLoadUnitCheckUop.robIdx.value
-  storeSetLoadUnitCheckEntry.foldPc := storeSetLoadUnitCheckUop.foldpc
+  storeSetLoadUnitCheckEntry.foldPc := storeSetLoadUnitCheckFoldPc
   storeSetLoadUnitCheckEntry.ssid := storeSetLoadUnitCheckUop.ssid
   storeSetLoadUnitCheckEntry.loadSqIdx := storeSetLoadUnitCheckUop.sqIdx.value
   storeSetLoadUnitCheckEntry.storeSqIdx := storeSetLoadUnitCheckAddrInvalidSqIdx.value
