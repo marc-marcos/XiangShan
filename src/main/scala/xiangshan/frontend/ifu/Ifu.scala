@@ -37,6 +37,7 @@ import xiangshan.frontend.FtqToIfuIO
 import xiangshan.frontend.ICacheToIfuIO
 import xiangshan.frontend.IfuToBackendIO
 import xiangshan.frontend.IfuToFtqIO
+import xiangshan.frontend.IfuToGpAddrMem
 import xiangshan.frontend.IfuToInstrUncacheIO
 import xiangshan.frontend.InstrUncacheToIfuIO
 import xiangshan.frontend.PreDecodeInfo
@@ -153,13 +154,11 @@ class Ifu(implicit p: Parameters) extends IfuModule
   private val s0_firstEndIsHalfRvi = instrBoundary.io.resp.firstEndIsHalfRvi
   private val s0_totalEndIsHalfRvi = instrBoundary.io.resp.totalEndIsHalfRvi
   private val s0_rawInstrVec       = instrBoundary.io.resp.rawInstrVec
-  private val s0_instrEndMask      = instrBoundary.io.resp.instrEndMask
 
   // The BPU predicted taken, but the end of the fetch block falls in the middle of an instruction.
   private val s0_invalidTaken = VecInit(
-    s0_fetchBlock(0).takenCfiOffset.valid && !s0_instrEndMask(s0_fetchBlock(0).takenCfiOffset.bits),
-    s0_fetchBlock(1).valid && s0_fetchBlock(1).takenCfiOffset.valid &&
-      !s0_instrEndMask(s0_fetchBlock(1).takenCfiOffset.bits + s0_fetchBlock(0).size)
+    s0_fetchBlock(0).takenCfiOffset.valid && s0_firstEndIsHalfRvi,
+    s0_fetchBlock(1).valid && s0_fetchBlock(1).takenCfiOffset.valid && s0_totalEndIsHalfRvi
   )
   dontTouch(s0_invalidTaken)
 
@@ -224,9 +223,20 @@ class Ifu(implicit p: Parameters) extends IfuModule
 
   // When an exception occurs, forward the exception information immediately instead of
   // waiting for instruction concatenation to complete.
-  private val s0_hasException   = s0_icacheMeta(0).exception.hasException
-  private val s0_realInstrValid = Mux(s0_hasException, 1.U(FetchBlockInstNum.W), s0_instrValid)
-  private val s0_realInstrCount = Mux(s0_hasException, 1.U((log2Ceil(FetchBlockInstNum) + 1).W), s0_instrCount)
+  private val s0_realInstrValid = MuxCase(
+    s0_instrValid,
+    Seq(
+      s0_icacheMeta(0).exception.hasException -> 1.U((FetchBlockInstNum + 1).W),
+      s0_icacheMeta(1).exception.hasException -> UIntToMask(s0_firstBlockInstrCount +& 1.U, FetchBlockInstNum + 1)
+    )
+  )
+  private val s0_realInstrCount = MuxCase(
+    s0_instrCount,
+    Seq(
+      s0_icacheMeta(0).exception.hasException -> 1.U((log2Ceil(FetchBlockInstNum) + 1).W),
+      s0_icacheMeta(1).exception.hasException -> (s0_firstBlockInstrCount +& 1.U((log2Ceil(FetchBlockInstNum) + 1).W))
+    )
+  )
 
   private val s0_realInstrVec = WireDefault(s0_fixedCompactedInstrVec)
   s0_realInstrVec.zipWithIndex.foreach { case (instr, i) =>
@@ -244,10 +254,11 @@ class Ifu(implicit p: Parameters) extends IfuModule
   s1_fire  := s1_valid && s2_ready
   s1_ready := s1_fire || !s1_valid
 
-  private val s1_fetchBlock   = RegEnable(s0_fixedFetchBlock, s0_fire)
-  private val s1_predTakenIdx = RegEnable(s0_predTakenIdx, s0_fire)
-  private val s1_invalidTaken = RegEnable(s0_fixedInvalidTaken, s0_fire)
-  private val s1_instrCount   = RegEnable(s0_realInstrCount, s0_fire)
+  private val s1_fetchBlock           = RegEnable(s0_fixedFetchBlock, s0_fire)
+  private val s1_predTakenIdx         = RegEnable(s0_predTakenIdx, s0_fire)
+  private val s1_invalidTaken         = RegEnable(s0_fixedInvalidTaken, s0_fire)
+  private val s1_firstBlockInstrCount = RegEnable(s0_firstBlockInstrCount, s0_fire)
+  private val s1_instrCount           = RegEnable(s0_realInstrCount, s0_fire)
 
   dontTouch(s1_fetchBlock)
 
@@ -269,7 +280,7 @@ class Ifu(implicit p: Parameters) extends IfuModule
   private val s1_icacheMeta = WireDefault(s1_icacheMetaIn)
   s1_icacheMeta.zipWithIndex.foreach { case (meta, i) =>
     meta.exception := s1_icacheMetaIn(i).exception || ExceptionType.fromEcc(
-      io.fromICache.corrupt(i).reduce(_ || _), // FIXME: consider which cacheline is corrupted, and modify exceptionMask
+      io.fromICache.corrupt(i).reduce(_ || _), // FIXME: how to distinguish between Ecc failures in different cachelines
       s1_valid
     )
   }
@@ -310,6 +321,12 @@ class Ifu(implicit p: Parameters) extends IfuModule
   private val s1_alignShiftNum = s1_prevIBufEnqPtr.value(1, 0)
   dontTouch(s1_alignShiftNum)
   private val s1_alignedInstrVec = align(s1_fixedInstrVec, s1_alignShiftNum)
+
+  private val s1_icacheExceptionIdx = Mux(
+    s1_icacheMeta(0).exception.hasException,
+    s1_alignShiftNum,
+    s1_alignShiftNum +& s1_firstBlockInstrCount
+  )
 
   private val s1_baseAlignedInstrPcVec = VecInit(s1_alignedInstrVec.map(instr => getInstrPc(instr, s1_fetchBlock)))
 
@@ -407,6 +424,8 @@ class Ifu(implicit p: Parameters) extends IfuModule
   private val s2_alignedInstrVec   = RegEnable(s1_alignedInstrVec, s1_fire)
   private val s2_alignedInstrPcVec = RegEnable(s1_alignedInstrPcVec, s1_fire)
   private val s2_alignedFoldPc     = RegEnable(s1_alignedFoldPc, s1_fire)
+
+  private val s2_icacheExceptionIdx = RegEnable(s1_icacheExceptionIdx, s1_fire)
 
   s2_fire := io.toIBuffer.fire
   dontTouch(s2_fire)
@@ -556,9 +575,12 @@ class Ifu(implicit p: Parameters) extends IfuModule
   private val select = s2_blockSel
   private val enq    = io.toIBuffer.bits.enqEnable
 
-  private val s2_rvcIll             = VecInit(rvcExpanders.map(_.io.ill))
-  private val s2_rvcException       = ExceptionType.fromRvcExpander((enq & s2_rvcIll.asUInt).orR, s2_valid)
-  private val s2_rvcExceptionOffset = PriorityEncoder(enq & s2_rvcIll.asUInt)
+  private val s2_rvcIll           = VecInit(rvcExpanders.map(_.io.ill))
+  private val s2_rvcExceptionMask = enq & s2_rvcIll.asUInt
+  private val s2_firstHasRvcIll   = ((~select.asUInt).asUInt & s2_rvcExceptionMask).orR
+  private val s2_rvcException     = ExceptionType.fromRvcExpander(s2_rvcExceptionMask.orR, s2_valid)
+
+  private val s2_icacheExceptionMask = UIntToOH(s2_icacheExceptionIdx, IBufferEnqueueWidth)
 
   io.toIBuffer.bits.isLastInFtqEntry := (0 until IBufferEnqueueWidth).map { i =>
     if (i == IBufferEnqueueWidth - 1) enq(i)
@@ -571,20 +593,33 @@ class Ifu(implicit p: Parameters) extends IfuModule
   }
   io.toIBuffer.bits.foldpc := s2_alignedFoldPc
   // mark the exception only on first instruction
-  io.toIBuffer.bits.exceptionType := s2_icacheMeta(0).exception || s2_rvcException
+  io.toIBuffer.bits.exceptionType := MuxCase(
+    s2_rvcException,
+    Seq(
+      s2_icacheMeta(0).exception.hasException -> s2_icacheMeta(0).exception,
+      s2_firstHasRvcIll                       -> s2_rvcException,
+      s2_icacheMeta(1).exception.hasException -> s2_icacheMeta(1).exception
+    )
+  )
   // backendException only needs to be set for the first instruction.
   // Other instructions in the same block may have pf or af set,
   // which is a side effect of the first instruction and actually not necessary.
   io.toIBuffer.bits.isBackendException := s2_icacheMeta(0).isBackendException
-  // if we have last half RV-I instruction, and has exception, we need to tell backend to caculate the correct pc
-  io.toIBuffer.bits.exceptionCrossPage := s2_icacheMeta(0).exception.hasException && s2_prevEndIsHalfRvi
-  // if icache respond with exception, it's marked on entire cacheline,
-  // so the first enqueued instr should be marked with exception
-  // otherwise, we only have rvcException, so select its offset
-  io.toIBuffer.bits.exceptionMask := Mux(
-    s2_icacheMeta(0).exception.hasException,
-    VecInit.tabulate(IBufferEnqueueWidth)(i => if (i < IfuAlignWidth) i.U === s2_alignShiftNum else false.B),
-    VecInit.tabulate(IBufferEnqueueWidth)(i => enq(i) & s2_rvcIll(i))
+  // if we have a rvi crossing page, with previous half normal and latter half has exception,
+  // we need to tell backend to calculate the correct xepc
+  io.toIBuffer.bits.exceptionCrossPage :=
+    // if first block has exception and has a half rvi (implies that previous request does not have exception),
+    s2_icacheMeta(0).exception.hasException && s2_prevEndIsHalfRvi ||
+      // or, the second block has exception while the first block does not, and the first block ends with a half rvi
+      !s2_icacheMeta(0).exception.hasException && s2_icacheMeta(1).exception.hasException && s2_firstEndIsHalfRvi
+  // if any fetch block has exception find by icache, use exceptionIdx calculated in s1, otherwise use rvcExpander
+  io.toIBuffer.bits.exceptionMask := MuxCase(
+    s2_rvcExceptionMask,
+    Seq(
+      s2_icacheMeta(0).exception.hasException -> s2_icacheExceptionMask,
+      s2_firstHasRvcIll                       -> s2_rvcExceptionMask,
+      s2_icacheMeta(1).exception.hasException -> s2_icacheExceptionMask
+    )
   )
 
   io.toIBuffer.bits.triggered := s2_alignTriggered
@@ -607,10 +642,16 @@ class Ifu(implicit p: Parameters) extends IfuModule
   /** to backend */
   // s4_gpAddr is valid iff gpf is detected.
   // Uncache doesn’t request iTLB; it only returns bus exceptions.
-  io.toBackend.gpAddrMem.wen                     := s2_toIBufferValid && s2_icacheMeta(0).exception.isGpf
-  io.toBackend.gpAddrMem.waddr                   := s2_fetchBlock(0).ftqIdx.value
-  io.toBackend.gpAddrMem.wdata.gpaddr            := s2_icacheMeta(0).gpAddr.toUInt
-  io.toBackend.gpAddrMem.wdata.isForVSnonLeafPTE := s2_icacheMeta(0).isForVSnonLeafPTE
+  private val s2_toGpaMemCandidates = (s2_fetchBlock zip s2_icacheMeta).map { case (fb, meta) =>
+    val candidate = Wire(new IfuToGpAddrMem)
+    candidate.wen                     := s2_toIBufferValid && meta.exception.isGpf
+    candidate.waddr                   := fb.ftqIdx.value
+    candidate.wdata.gpaddr            := meta.gpAddr.toUInt
+    candidate.wdata.isForVSnonLeafPTE := meta.isForVSnonLeafPTE
+    candidate
+  }
+
+  io.toBackend.gpAddrMem := PriorityMux(s2_toGpaMemCandidates.map(candidate => candidate.wen -> candidate))
 
   // Write back to Ftq
   private val s2_uncacheRange     = VecInit((0 until FetchBlockInstNum).map(i => if (i == 0) true.B else false.B))
@@ -660,9 +701,7 @@ class Ifu(implicit p: Parameters) extends IfuModule
     // execption can happen in next page only when cross page.
     io.toIBuffer.bits.exceptionCrossPage :=
       s2_prevEndIsHalfRvi && (s2_icacheMeta(0).exception.hasException || uncacheException.hasException)
-    io.toIBuffer.bits.exceptionMask := VecInit.tabulate(IBufferEnqueueWidth) { i =>
-      if (i < IfuAlignWidth) i.U === s2_alignShiftNum else false.B
-    }
+    io.toIBuffer.bits.exceptionMask := UIntToOH(s2_alignShiftNum, IBufferEnqueueWidth)
 
     // In uncache scenarios, only a single instruction is allowed for execution,
     // so the valid signal enqueued into the IBuffer must be aligned.
