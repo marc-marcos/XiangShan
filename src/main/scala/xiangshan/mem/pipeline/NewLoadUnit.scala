@@ -30,6 +30,7 @@ import xiangshan.backend.fu.fpu.FPU
 import xiangshan.backend.ctrlblock.{DebugLsInfoBundle, LsTopdownInfo}
 import xiangshan.backend.fu.NewCSR._
 import xiangshan.backend.exu.ExeUnitParams
+import xiangshan.backend.rob.RobPtr
 import xiangshan.mem.Bundles._
 import xiangshan.mem.LoadReplayCauses._
 import xiangshan.mem.LoadStage._
@@ -1272,6 +1273,9 @@ class LoadUnitS3(param: ExeUnitParams)(
     // Load cancel
     val cancel = Output(Bool())
 
+    val perfRobHeadPtr = Input(new RobPtr)
+    val perfLqHeadPtr = Input(new LqPtr)
+    val perfLqFull = Input(Bool())
     val perfMdpAddr = Output(new PerfMdpAddr)
 
     // CSR control signals
@@ -1516,6 +1520,7 @@ class LoadUnitS3(param: ExeUnitParams)(
   val perfMdpAddrHit = Mux(s4HeadValid, s4Head.perfMdpAddrHit.get, in.perfMdpAddrHit.get)
   val perfWaitStoreRetired = Mux(s4HeadValid, s4Head.perfWaitStoreRetired.get, in.perfWaitStoreRetired.get)
   val perfIsCmaReplay = Mux(s4HeadValid, s4Head.perfIsCmaReplay.get, in.perfIsCmaReplay.get)
+  val perfMdpUop = Mux(s4HeadValid, s4Head.uop, uop)
   val perfMdpAddrCanCount = lqWriteValid && !lqWriteNeedReplay
   val perfMdpAddrNonStrict = !perfMdpAddrStrict
   val perfMdpAddrMiss = !perfMdpAddrHit
@@ -1533,6 +1538,9 @@ class LoadUnitS3(param: ExeUnitParams)(
   perfMdpAddr.replayStrictHit := perfReplayMdpAddrCanCount && perfMdpAddrStrict && perfMdpAddrHit
   perfMdpAddr.replayStrictMiss := perfReplayMdpAddrCanCount && perfMdpAddrStrict && perfMdpAddrMiss
   perfMdpAddr.waitStoreRetired := perfWaitStoreRetiredCanCount
+  perfMdpAddr.perfAtRobHead := perfMdpUop.robIdx === io.perfRobHeadPtr
+  perfMdpAddr.perfAtLqHead := perfMdpUop.lqIdx === io.perfLqHeadPtr
+  perfMdpAddr.perfLqFull := io.perfLqFull
 
   // StoreSet ChiselDB trace
   val storeSetLoadUnitCheckHartId = p(XSCoreParamsKey).HartId
@@ -1888,6 +1896,9 @@ class LoadUnitIO(val param: ExeUnitParams)(implicit p: Parameters) extends XSBun
   // IQ wakeup and load cancel
   val wakeup = ValidIO(new MemWakeUpBundle)
   val cancel = Output(Bool())
+  val perfRobHeadPtr = Input(new RobPtr)
+  val perfLqHeadPtr = Input(new LqPtr)
+  val perfLqFull = Input(Bool())
   val perfMdpAddr = Output(new PerfMdpAddr)
   // Exception info
   val exceptionInfo = ValidIO(new MemExceptionInfo)
@@ -2022,6 +2033,9 @@ class NewLoadUnit(val param: ExeUnitParams)(implicit p: Parameters) extends XSMo
   io.rawNukeQuery.revokeLastLastCycle := s3.io.revokeLastLastCycle
   io.rollback := s3.io.rollback
   io.cancel := s3.io.cancel
+  s3.io.perfRobHeadPtr := io.perfRobHeadPtr
+  s3.io.perfLqHeadPtr := io.perfLqHeadPtr
+  s3.io.perfLqFull := io.perfLqFull
   io.perfMdpAddr := s3.io.perfMdpAddr
   io.exceptionInfo := s3.io.exceptionInfo
   s3.io.csrCtrl := io.csrCtrl
