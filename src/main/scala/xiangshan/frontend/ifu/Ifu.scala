@@ -576,7 +576,7 @@ class Ifu(implicit p: Parameters) extends IfuModule
   private val enq    = io.toIBuffer.bits.enqEnable
 
   private val s2_rvcIll           = VecInit(rvcExpanders.map(_.io.ill))
-  private val s2_rvcExceptionMask = enq & s2_rvcIll.asUInt
+  private val s2_rvcExceptionMask = s2_rawInstrValid & s2_rvcIll.asUInt
   private val s2_firstHasRvcIll   = ((~select.asUInt).asUInt & s2_rvcExceptionMask).orR
   private val s2_rvcException     = ExceptionType.fromRvcExpander(s2_rvcExceptionMask.orR, s2_valid)
 
