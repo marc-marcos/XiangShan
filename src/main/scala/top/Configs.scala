@@ -300,7 +300,7 @@ case class L2CacheConfig
   inclusive: Boolean = true,
   banks: Int = 1,
   tp: Boolean = true,
-  nl: Boolean = false, 
+  nl: Boolean = false,
   enablePC: Boolean = false, // Enable PC field for L1Param
   enableFlush: Boolean = false
 ) extends Config((site, here, up) => {
@@ -501,8 +501,7 @@ class CVMCompile extends Config((site, here, up) => {
     HasDelayNoencryption = false
   )
   case XSTileKey => up(XSTileKey).map(_.copy(
-    HasBitmapCheck = true,
-    HasBitmapCheckDefault = false))
+    HasBitmapCheck = true))
 })
 
 class CVMTestCompile extends Config((site, here, up) => {
@@ -512,8 +511,7 @@ class CVMTestCompile extends Config((site, here, up) => {
     HasDelayNoencryption = true
   )
   case XSTileKey => up(XSTileKey).map(_.copy(
-    HasBitmapCheck =true,
-    HasBitmapCheckDefault = true))
+    HasBitmapCheck =true))
 })
 
 class MinimalAliasDebugConfig(n: Int = 1) extends Config(
