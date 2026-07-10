@@ -298,8 +298,8 @@ class SSIT(implicit p: Parameters) extends XSModule {
           strict = false.B
         )
         when(s2_ssidIsSame){
-          data_array.io.wdata(SSIT_UPDATE_LOAD_READ_PORT).strict := true.B
-          debug_strict(s2_mempred_update_req.ldpc) := true.B
+          data_array.io.wdata(SSIT_UPDATE_LOAD_READ_PORT).strict := false.B
+          debug_strict(s2_mempred_update_req.ldpc) := false.B
         }
       }
     }
