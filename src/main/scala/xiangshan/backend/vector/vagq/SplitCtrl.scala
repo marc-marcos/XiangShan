@@ -35,10 +35,20 @@ class SplitCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
   private val activeEntryHasReq = VecInit(activePending.map(_.orR))
   private val emptyEntryHasReq  = VecInit(emptyPending.map(_.orR))
 
+  private val olderEntryPairs = (for {
+    i <- 0 until numEntries
+    j <- i + 1 until numEntries
+  } yield (i, j) -> entryOlderThan(io.in(i).entry, i, io.in(j).entry, j)).toMap
+  private val olderEntryMatrix = Seq.tabulate(numEntries, numEntries) { (i, j) =>
+    if (i == j) true.B
+    else if (i < j) olderEntryPairs(i -> j)
+    else !olderEntryPairs(j -> i)
+  }
+
   private val hasActiveReq = activeEntryHasReq.asUInt.orR
   private val hasEmptyReq  = emptyEntryHasReq.asUInt.orR
-  private val activeSel    = OHToUInt(oldestEntryOH((0 until numEntries).map(i => activeEntryHasReq(i)), io.in, numEntries))
-  private val emptySel     = OHToUInt(oldestEntryOH((0 until numEntries).map(i => emptyEntryHasReq(i)), io.in, numEntries))
+  private val activeSel    = OHToUInt(oldestEntryOH(activeEntryHasReq.toSeq, olderEntryMatrix))
+  private val emptySel     = OHToUInt(oldestEntryOH(emptyEntryHasReq.toSeq, olderEntryMatrix))
   private val activeInput  = io.in(activeSel)
   private val emptyInput   = io.in(emptySel)
   private val activeMask   = activePending(activeSel)

@@ -90,23 +90,26 @@ trait HasVAGQHelper extends HasCircularQueuePtrHelper { this: HasVAGQParameters 
     Mux1H(idxHitSeq(idx, numEntries), entries)
   }
 
-  protected def oldestEntryOH(valids: Seq[Bool], entries: Vec[CtrlInput], numEntries: Int): UInt = {
-    require(valids.length == numEntries)
+  protected def entryOlderThan(
+    left: VAGQEntryMeta,
+    leftIdx: Int,
+    right: VAGQEntryMeta,
+    rightIdx: Int
+  ): Bool = {
+    require(leftIdx != rightIdx)
+    val sameRob = left.robIdx === right.robIdx
+    val leftOlderSameRob = left.uopIdx < right.uopIdx ||
+      (left.uopIdx === right.uopIdx && (leftIdx < rightIdx).B)
+    Mux(sameRob, leftOlderSameRob, isAfter(right.robIdx, left.robIdx))
+  }
+
+  protected def oldestEntryOH(valids: Seq[Bool], olderThan: Seq[Seq[Bool]]): UInt = {
+    val numEntries = valids.length
+    require(olderThan.length == numEntries && olderThan.forall(_.length == numEntries))
     VecInit((0 until numEntries).map { i =>
-      val thisEntry = entries(i).entry
-      val olderThanAll = (0 until numEntries).map { j =>
-        if (i == j) {
-          true.B
-        } else {
-          val thatEntry = entries(j).entry
-          val sameRob = thatEntry.robIdx === thisEntry.robIdx
-          val thisOlderSameRob = sameRob && (
-            thisEntry.uopIdx < thatEntry.uopIdx ||
-              (thisEntry.uopIdx === thatEntry.uopIdx && (i < j).B)
-          )
-          !valids(j) || isAfter(thatEntry.robIdx, thisEntry.robIdx) || thisOlderSameRob
-        }
-      }.reduce(_ && _)
+      val olderThanAll = (0 until numEntries).filter(_ != i).map { j =>
+        !valids(j) || olderThan(i)(j)
+      }.reduceOption(_ && _).getOrElse(true.B)
       valids(i) && olderThanAll
     }).asUInt
   }
