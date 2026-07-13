@@ -9,7 +9,7 @@ class AddrGen(implicit p: Parameters) extends VAGQModule {
   val in = IO(Input(new AddrGenInput))
   val out = IO(Output(new AddrGenOutput))
 
-  private val elemIdx = (in.byteOffset >> in.deew)(vagqFlowByteWidth - 1, 0)
+  private val elemIdx = in.elemIdx
 
   private val elemOrdFromInst = (in.uopIdx << elemNum(in.deew)) | elemIdx  // element ordinal from inst
   private val strideElemOrd = elemOrdFromInst
@@ -38,7 +38,7 @@ class AddrGenInput(implicit p: Parameters) extends VAGQBundle {
   val baseAddr = UInt(XLEN.W)
   val op2Data = UInt(VLEN.W)
   val uopIdx = UInt(vagqUopIdxWidth.W)
-  val byteOffset = UInt(vagqFlowByteWidth.W)
+  val elemIdx = UInt(vagqFlowByteWidth.W)
   val deew = UInt(VAGQConstants.EewWidth.W)
   val ieew = UInt(VAGQConstants.EewWidth.W)
 }

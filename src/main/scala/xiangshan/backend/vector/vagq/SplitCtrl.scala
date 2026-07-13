@@ -44,11 +44,16 @@ class SplitCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
   private val activeMask   = activePending(activeSel)
   private val emptyMask    = emptyPending(emptySel)
 
-  private val activeLowOffset    = elemStartOffset(lowBit(activeMask), activeInput.entry.deew)
+  private val activeLowIdx       = lowBit(activeMask)
+  private val activeLowElemIdx   = activeLowIdx >> activeInput.entry.deew
+  private val activeLowOffset    = (activeLowElemIdx << activeInput.entry.deew)(vagqFlowByteWidth - 1, 0)
   private val activeLowIssueMask = elemByteMask(activeLowOffset, activeInput.entry.deew) & activeMask
-  private val activeRemaining    = activeMask & ~activeLowIssueMask
-  private val activeHighOffset   = elemStartOffset(highBit(activeRemaining), activeInput.entry.deew)
-  private val activeHasTwoReq    = activeRemaining.orR
+  private val activeHighIdx      = highBit(activeMask)
+  private val activeHighElemIdx  = activeHighIdx >> activeInput.entry.deew
+  private val activeHighOffset   = (activeHighElemIdx << activeInput.entry.deew)(vagqFlowByteWidth - 1, 0)
+  private val activeHighIssueMask = elemByteMask(activeHighOffset, activeInput.entry.deew) & activeMask
+
+  private val activeHasTwoReq = activeLowElemIdx =/= activeHighElemIdx
   private val activeCanIssueSecond = activeHasTwoReq && !activeInput.entry.isOrdered
 
   private val activeAddrGen = Seq.fill(VAGQConstants.ActiveIssueWidth)(Module(new AddrGen))
@@ -56,7 +61,7 @@ class SplitCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
   activeAddrGen(0).in.baseAddr   := activeInput.entry.baseAddr
   activeAddrGen(0).in.op2Data    := activeInput.entry.op2Data
   activeAddrGen(0).in.uopIdx     := activeInput.entry.uopIdx
-  activeAddrGen(0).in.byteOffset := activeLowOffset
+  activeAddrGen(0).in.elemIdx    := activeLowElemIdx
   activeAddrGen(0).in.deew       := activeInput.entry.deew
   activeAddrGen(0).in.ieew       := activeInput.entry.ieew
 
@@ -64,7 +69,7 @@ class SplitCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
   activeAddrGen(1).in.baseAddr   := activeInput.entry.baseAddr
   activeAddrGen(1).in.op2Data    := activeInput.entry.op2Data
   activeAddrGen(1).in.uopIdx     := activeInput.entry.uopIdx
-  activeAddrGen(1).in.byteOffset := activeHighOffset
+  activeAddrGen(1).in.elemIdx    := activeHighElemIdx
   activeAddrGen(1).in.deew       := activeInput.entry.deew
   activeAddrGen(1).in.ieew       := activeInput.entry.ieew
 
@@ -72,11 +77,7 @@ class SplitCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
 
   private val activeIssueMasks = Wire(Vec(VAGQConstants.ActiveIssueWidth, UInt(vagqFlowBytes.W)))
   activeIssueMasks(0) := activeLowIssueMask
-  activeIssueMasks(1) := Mux(
-    activeCanIssueSecond,
-    elemByteMask(activeHighOffset, activeInput.entry.deew) & activeRemaining,
-    0.U(vagqFlowBytes.W)
-  )
+  activeIssueMasks(1) := activeHighIssueMask
 
   private val activeLaneValids = Seq(
     hasActiveReq,

@@ -60,12 +60,7 @@ trait HasVAGQHelper extends HasCircularQueuePtrHelper { this: HasVAGQParameters 
 
   protected def bitMask(idx: UInt): UInt = UIntToOH(idx, vagqFlowBytes)
 
-  protected def elemStartOffset(byteOffset: UInt, deew: UInt): UInt = {
-    (((byteOffset >> deew) << deew)(vagqFlowByteWidth - 1, 0))
-  }
-
-  protected def elemByteMask(byteOffset: UInt, deew: UInt): UInt = {
-    val alignedOffset = elemStartOffset(byteOffset, deew)
+  protected def elemByteMask(alignedOffset: UInt, deew: UInt): UInt = {
     val baseMask = MuxLookup(deew, "h0001".U(vagqFlowBytes.W))(Seq(
       0.U -> "h0001".U(vagqFlowBytes.W),
       1.U -> "h0003".U(vagqFlowBytes.W),
