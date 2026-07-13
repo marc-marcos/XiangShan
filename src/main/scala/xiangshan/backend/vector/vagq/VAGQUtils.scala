@@ -111,18 +111,24 @@ trait HasVAGQHelper extends HasCircularQueuePtrHelper { this: HasVAGQParameters 
     )).asUInt
   }
 
-  protected def elemNum(deew: UInt): UInt = {
-    MuxLookup(deew, 4.U(3.W))(Seq(
-      0.U -> 4.U,
-      1.U -> 3.U,
-      2.U -> 2.U,
-      3.U -> 1.U
+  protected def elemOrdFromUop(uopIdx: UInt, elemIdx: UInt, deew: UInt): UInt = {
+    val elemIdx4 = elemIdx(vagqFlowByteWidth - 1, 0)
+    val e8  = Cat(uopIdx, elemIdx4)
+    val e16 = Cat(0.U(1.W), uopIdx, elemIdx4(2, 0))
+    val e32 = Cat(0.U(2.W), uopIdx, elemIdx4(1, 0))
+    val e64 = Cat(0.U(3.W), uopIdx, elemIdx4(0))
+
+    MuxLookup(deew, e8)(Seq(
+      0.U -> e8,
+      1.U -> e16,
+      2.U -> e32,
+      3.U -> e64
     ))
   }
 
   protected def faultVstart(entry: VAGQEntryMeta): UInt = {
     val elemIdx = entry.faultElemIdx >> entry.deew
-    ((entry.uopIdx << elemNum(entry.deew)) + elemIdx)(VAGQConstants.FaultVstartWidth - 1, 0)
+    elemOrdFromUop(entry.uopIdx, elemIdx, entry.deew)
   }
 
   protected def enterSplit(entry: VAGQEntryMeta): Unit = {

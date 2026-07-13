@@ -11,20 +11,25 @@ class AddrGen(implicit p: Parameters) extends VAGQModule {
 
   private val elemIdx = in.elemIdx
 
-  private val elemOrdFromInst = (in.uopIdx << elemNum(in.deew)) | elemIdx  // element ordinal from inst
-  private val strideElemOrd = elemOrdFromInst
-  private val strideOffsetWide = in.op2Data(XLEN - 1, 0).asSInt * strideElemOrd.asSInt
-  private val strideOffset = strideOffsetWide.asUInt(XLEN - 1, 0)
+  private val strideElemOrd = elemOrdFromUop(in.uopIdx, elemIdx, in.deew) // element ordinal from inst
+  private val strideOffsetWide = in.op2Data(XLEN - 1, 0) * strideElemOrd
+  private val strideOffset = strideOffsetWide(XLEN - 1, 0)
 
-  private val idx8 = VecInit((0 until 16).map(i => in.op2Data(8 * i + 7, 8 * i)))(elemIdx)
-  private val idx16 = VecInit((0 until 8).map(i => in.op2Data(16 * i + 15, 16 * i)))(elemIdx(2, 0))
-  private val idx32 = VecInit((0 until 4).map(i => in.op2Data(32 * i + 31, 32 * i)))(elemIdx(1, 0))
-  private val idx64 = VecInit((0 until 2).map(i => in.op2Data(64 * i + 63, 64 * i)))(elemIdx(0))
-  private val indexOffset = MuxLookup(in.ieew, idx64)(Seq(
-    0.U -> Cat(0.U((XLEN - 8).W), idx8),
-    1.U -> Cat(0.U((XLEN - 16).W), idx16),
-    2.U -> Cat(0.U((XLEN - 32).W), idx32),
-    3.U -> idx64,
+  private val indexByteOffset = MuxLookup(in.ieew, elemIdx)(Seq(
+    0.U -> elemIdx,
+    1.U -> Cat(elemIdx(2, 0), 0.U(1.W)),
+    2.U -> Cat(elemIdx(1, 0), 0.U(2.W)),
+    3.U -> Cat(elemIdx(0), 0.U(3.W)),
+  ))
+  private val indexSel64 = Mux(indexByteOffset(3), in.op2Data(127, 64), in.op2Data(63, 0))
+  private val indexSel32 = Mux(indexByteOffset(2), indexSel64(63, 32), indexSel64(31, 0))
+  private val indexSel16 = Mux(indexByteOffset(1), indexSel32(31, 16), indexSel32(15, 0))
+  private val indexSel8  = Mux(indexByteOffset(0), indexSel16(15, 8), indexSel16(7, 0))
+  private val indexOffset = MuxLookup(in.ieew, indexSel64)(Seq(
+    0.U -> Cat(0.U((XLEN - 8).W), indexSel8),
+    1.U -> Cat(0.U((XLEN - 16).W), indexSel16),
+    2.U -> Cat(0.U((XLEN - 32).W), indexSel32),
+    3.U -> indexSel64,
   ))
 
   private val offset = Mux(VAGQUopType.isStride(in.uopType), strideOffset, indexOffset)
