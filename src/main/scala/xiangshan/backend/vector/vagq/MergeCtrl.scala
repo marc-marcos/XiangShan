@@ -10,19 +10,19 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
   val io = IO(new MergeCtrlIO(numEntries))
 
   private val respVec = io.lduResp.toSeq ++ io.staResp.toSeq ++ Seq(io.lsqEmptyResp)
+  private val respAcceptedVec = VecInit(respVec.map { resp =>
+    resp.valid && respMatchesEntry(resp.bits, io.entry, numEntries)
+  })
   private val respExceptionHit = Wire(Vec(numEntries, Bool()))
   for (i <- 0 until numEntries) {
-    respExceptionHit(i) := respVec.map { resp =>
-      resp.valid &&
-        resp.bits.exception &&
-        resp.bits.entryIdx === i.U(vagqEntryIdxWidth.W) &&
-        respMatchesEntry(resp.bits, io.entry, numEntries)
+    respExceptionHit(i) := respVec.zip(respAcceptedVec).map { case (resp, accepted) =>
+      accepted && resp.bits.exception && resp.bits.entryIdx === i.U(vagqEntryIdxWidth.W)
     }.reduce(_ || _)
   }
 
   for (lane <- 0 until VAGQConstants.MergeRespWidth) {
     val resp = respVec(lane)
-    val respAccepted = resp.valid && respMatchesEntry(resp.bits, io.entry, numEntries)
+    val respAccepted = respAcceptedVec(lane)
     val respMask = resp.bits.mask
 
     io.reqUpdate(lane).valid                := respAccepted
