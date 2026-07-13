@@ -1,146 +1,169 @@
 # VAGQ 设计进度
 
-> 最后更新: 2026-07-06
+> 最后更新: 2026-07-13
+>
+> 本文以当前源码为准。`vagq-plan.md` 和 `vagq-requirements.md` 描述目标方案，不代表所有功能已经正确实现。
 
 ---
 
-## 当前状态
+## 当前结论
 
-- [x] 旧 VLSU 架构调研 (VLSplit, VSSplit, VLMergeBuffer, VSMergeBuffer, VSegmentUnit, MisalignBuffer)
-- [x] RISC-V V Extension spec 语义分析 (constant-stride, indexed, segment, mask, tail, vstart)
-- [x] 5 个关键设计决策全部敲定
-- [x] VAGQ 设计方案完成 (`docs/design/vagq-plan.md`)
-- [x] VAGQ 设计规则沉淀到 Codex skill (`~/.codex/skills/XiangShan/xiangshan-vagq/SKILL.md`)
-- [x] VAGQ 核心 Chisel 框架已落地到 `src/main/scala/xiangshan/backend/vector/vagq/`
-- [x] 已添加独立生成入口 `xiangshan.backend.vector.vagq.VAGQMain`
-- [x] `SplitCtrl` active 路径已扩展为 2 路 `VAGQLsuReq`，一拍最多发两个 active 元素请求
-- [x] `SplitCtrl` 已实现 LSQ-empty 请求，使用 `emptyMask` 跟踪 VAGQ byte 状态，使用 `entryMask` 定位 LSQ entry
-- [x] LSQWrapper / LoadQueue / StoreQueue 已添加 empty mark 接口，LSQ 侧会确认目标 entry match 后 ACK，否则 NACK
-- [x] `SplitCtrl` store active 请求已通过 VAGQ VRF read 路径读取 `psrc2` 作为 store data
-- [x] `MemBlock` 已例化 `VAGQ` 和 `VAGQDownstreamAdapter`
-- [x] VAGQ LSQ-empty req/resp 已通过 `VAGQDownstreamAdapter` 接到 `LSQWrapper`
-- [x] VAGQ active load req 已在 `VAGQDownstreamAdapter` 中转成普通 vector load `ExuInput`
-- [x] VAGQ active load req0/req1 已分别与 `issueLda0/issueLda1` 按 `robIdx` 仲裁，送入 `LoadUnit0/1`
-- [x] `LoadUnit` 已支持 VAGQ load metadata、VAGQ response、NACK 重发语义和 active load 数据写 VRF
-- [ ] 后端 issue/dispatch 到 VAGQ 的上游接入
-- [ ] VAGQ active store req 到 STA/SQ 的下游适配与仲裁
-- [ ] VAGQ VRF/ROB 写回与 release 的系统级接入
-- [ ] segment 访存完整语义验证
-- [ ] standalone RTL 完整生成
-- [ ] 仿真验证
+VAGQ core、上游 issue 旁路、MemBlock、LDU/STA、LSQ empty mark、VRF 和 ROB 的结构连线已经存在，代码可以通过 Scala 编译。但当前还不能认为 constant-stride/indexed load/store 已经端到端可用，主要阻塞点是:
+
+- 地址侧、stride 数据侧和 indexed 数据侧生成的 `entryIdx` 都固定为 0，VOQ 尚未真正分配 entry。
+- 数据侧生成的 `psrc2` 固定为 0，load merge 可能读取错误的旧 `vd`。
+- `SplitCtrl` 发出的 active store `data` 固定为 0，当前 store data 路径不正确。
+- 空 entry 同拍收到地址侧和数据侧时，`enterSplit` 没有置 `valid`，entry 会保持 invalid。
+- `MergeCtrl.mergeRespValid` 在 pending merge 被 redirect 杀死时没有清除，会阻塞后续 merge read。
+- segment、异常、NACK/replay、flush 和多 entry 并发尚无系统验证。
+
+因此当前阶段应定义为: **端到端结构接通，关键 tag/data 和边界状态仍待补全。**
 
 ---
 
-## 当前代码快照
+## 完成项
 
-### 已实现文件
+- [x] VAGQ 需求与设计方案文档
+- [x] VAGQ core: `EntryTable`、`MaskGen`、`AddrGen`、`SplitCtrl`、`MergeCtrl`
+- [x] `VAGQMain` standalone 生成入口
+- [x] 8-entry、16-byte flow、2 路 active request 的基础结构
+- [x] 地址侧从两个 StaIQ 出队路径旁路到 VAGQ
+- [x] stride 数据侧从两个整数 STD issue 路径旁路到 VAGQ
+- [x] indexed 数据侧从两个 VStd issue pipe OG2 路径旁路到 VAGQ
+- [x] active load 与普通 LDA 在 `VAGQDownstreamAdapter` 仲裁后进入 LDU0/1
+- [x] active store 与普通 STA 在 `VAGQDownstreamAdapter` 仲裁后进入 STA0/1
+- [x] LDU 3 路和 STA 2 路 response 直接返回 VAGQ
+- [x] active load 成功数据复用普通 vector load 写口，并使用 byte mask
+- [x] VAGQ load 禁止普通 LDU ROB writeback，完成统一由 VAGQ 写回
+- [x] LSQ empty mark 接入 LQ/SQ，并返回 ACK/NACK
+- [x] merge old-`vd` 的专用 VRF 读口和 non-active byte 专用 VRF 写口
+- [x] VAGQ 独立 ROB writeback 端口和异常信息转换
+- [x] active/empty 输出使用带 redirect flush 的一项流水寄存
+- [x] entry 宽 payload 不做 reset；reset/redirect 只清 `valid`
+- [x] 同拍多路异常选择最小 `faultElemIdx`，相同 offset 按 lane 顺序打破平局
+- [x] 当前源码通过 `mill -i xiangshan.compile`
 
-| 文件 | 当前职责 |
+---
+
+## 当前数据流
+
+### 上游
+
+```text
+StaIQ addr uop --OG1/Region--> VAGQ.addrUop[0:1]
+
+StdIQ stride data uop -------> MemBlock -------> VAGQ.dataUop[0:1]
+VStdIQ indexed data uop --OG2/VecRegion-------> VAGQ.dataUop[2:3]
+```
+
+- `Region` 识别 strided/indexed vector memory address uop，阻止其继续进入普通 STA/LDU 路径，并在 VAGQ 接受后向 StaIQ 生成延迟到 S2 的成功响应。
+- stride data uop 不进入 `StdExeUnit`，`MemBlock` 直接把整数源操作数构造成 `VAGQDataSideUop`。
+- indexed data uop 在 VStd issue pipe 读出 `vs2`，OG2 构造成 `VAGQDataSideUop`，并绕过普通 VStd 功能单元。
+- 当前三个构造函数都把 `entryIdx` 写成 0；VOQ 分配结果还没有进入这些 bundle。
+
+### VAGQ core
+
+```text
+addrUop/dataUop -> EntryTable -> SplitCtrl -> registered active/empty req
+                         ^           |                   |
+                         |           v                   v
+                         +----- bitmap update      LDU/STA/LSQ
+                         ^                               |
+                         +--------- MergeCtrl <----------+
+                                         |
+                                  VRF merge / ROB WB
+```
+
+- 地址侧和数据侧通过 `entryIdx` 配对；`waitA` 表示等待地址侧，`waitSI` 表示等待数据侧。
+- `reqSent/reqAck` 以 16-bit byte bitmap 编码 IDLE/SENT/DONE。
+- active 和 empty 路径分别选择最老的可处理 entry；比较顺序为 `robIdx`、`uopIdx`、entry index。
+- active lane0 选择最低地址元素，lane1 从剩余 mask 中选择最高地址元素；ordered indexed 只允许单发。
+- empty 路径一次发送选中 entry 的全部 pending non-active byte，并转换为 LSQ element mask。
+- active 和 empty 输出各经过一项寄存流水；请求进入该流水时置 `reqSent`，redirect 可丢弃寄存中的旧请求。
+
+### 下游
+
+```text
+VAGQ active[0] --+-- ordinary LDA0 priority --> LDU0 --+
+VAGQ active[1] --+-- ordinary LDA1 priority --> LDU1 --+--> VAGQ lduResp[0:2]
+ordinary LDA2 -------------------------------> LDU2 --+
+
+VAGQ active[0] --+-- ordinary STA0 priority --> STA0 --+
+VAGQ active[1] --+-- ordinary STA1 priority --> STA1 --+--> VAGQ staResp[0:1]
+
+VAGQ empty --> LSQWrapper --> LoadQueue/StoreQueue --> emptyResp
+```
+
+- 普通 LDA/STA 请求优先。只有对应 `issueLda(i)`/`issueSta(i)` 无效时，active lane `i` 才使用 Unit `i`。
+- 这不是按 `robIdx` 的全局最老仲裁，active lane0/1 也不能迁移到其他空闲 unit。
+- active store 同拍产生 STA 地址请求和 `vagqStdData`，后者复用 `StdExeUnit.vstdIn` 写 SQ data；但当前请求中的 `data` 为 0。
+- LDU/STA response 是 `Valid`，无 response buffer；每个 unit 每拍最多返回一路，对应固定的 3+2 输入 lane。
+
+### VRF 与 ROB
+
+- active load 数据由 LDU 成功路径写回普通 vector load 写口，`vagqActiveLoadMask` 将写使能限制到 active byte。
+- load 的 non-active byte 由 `MergeCtrl` 读取 `psrc2` 指向的旧 `vd`，按 `elemAgnosticMask` 生成数据，再通过 VAGQ 专用 masked VRF 写口写回。
+- `MergeCtrl` 完成或异常后生成 `VAGQWritebackReq`，`MemBlock` 转为专用 `WriteBackRobBundle`，经 `CtrlBlock` 延迟和 flush 过滤后送 ROB。
+- ROB writeback fire 后，EntryTable 清除对应 entry 的 `valid`。
+
+---
+
+## 关键实现细节
+
+| 项目 | 当前实现 |
 |---|---|
-| `Vagq.scala` | VAGQ 常量、Bundle、顶层连线，以及 `VAGQMain` 独立生成入口 |
-| `EntryTable.scala` | VAGQ entry 寄存器表，地址侧/数据侧配对，状态与 bitmap 更新 |
-| `MaskGen.scala` | 根据 `vl/vstart/vm/v0/vma/vta/deew/uopIdx` 生成 active 和 agnostic byte mask |
-| `AddrGen.scala` | 根据 stride/indexed 类型生成元素地址、元素 byte mask、`elemIdx` |
-| `SplitCtrl.scala` | 从 `split` 状态 entry 中挑选 pending byte，发出 active LSU 请求或 LSQ-empty 请求 |
-| `MergeCtrl.scala` | 处理 ACK/NACK/exception，load merge 旧 `vd`，ROB 写回和异常写回 |
-| `VAGQUtils.scala` | entry 选择、mask、merge、`faultVstart` 等公共 helper |
+| `VAGQSize` | 8 |
+| flow | 16 byte，要求 `VLEN=128` |
+| address/data issue width | 2 / 4 |
+| active request width | 2 |
+| response width | 3 LDU + 2 STA + 1 LSQ empty |
+| active entry 选择 | 最老 `robIdx/uopIdx/entryIdx` |
+| merge/wb/excp 选择 | `PriorityEncoder`，低 entry index 优先 |
+| ordered indexed | 有 active request 未 ACK 时禁止继续发 active；lane1 禁止 |
+| NACK | `clearReqSent`，回到可重发状态 |
+| response 匹配 | `entryIdx` 命中且 live entry 的 `robIdx` 相同 |
+| redirect | 清 entry `valid`；过滤候选；flush active/empty 输出流水 |
+| entry reset | 仅 `entryValid` reset，宽 payload 不 reset |
 
-### 相关 MemBlock / LSU 文件
+---
 
-| 文件 | 当前职责 |
+## 未完成与风险
+
+### P0 正确性
+
+1. 实现 VOQ entry 分配，并把不同的 `entryIdx` 同时送到地址侧、stride 数据侧和 indexed 数据侧。
+2. 正确生成 `psrc2`，区分 load old-`vd` 和 store data 源寄存器。
+3. 补全 active store data。当前 `SplitCtrl.io.lsuReq.bits.data := 0`，写入 SQ 的数据错误。
+4. 修复空 entry 同拍地址/数据配对时 `valid` 未置位。
+5. 修复 redirect 杀死 pending merge response 后 `mergeRespValid` 不释放的问题。
+6. 明确并验证一条 vector memory 指令各 uop 的 LQ/SQ 预留数量，以及 `lqIdx/sqIdx + elemIdx` 的边界和 segment 语义。
+
+### P1 协议与功能
+
+1. 为 indexed OG2 data uop 建立真实 backpressure 保证。当前接口是 `Decoupled`，但 IssuePipe 只用 `XSError` 检查 `ready`，不能停住 OG2。
+2. 检查地址侧 StaIQ 成功反馈与 VAGQ 接收、redirect 同拍竞争。
+3. 验证 LDU/STA `Valid` response 在所有 replay/exception/flush 情况下不会重复或遗漏。
+4. 完成 segment `nf` 的地址、LSQ 索引和数据布局验证；当前 `nf` 主要是透传。
+5. 验证非对齐、跨 16B、跨页请求是否始终被设计约束排除；LDU/STA 目前用 assertion 禁止 VAGQ 进入 unaligned path。
+
+### P2 验证与优化
+
+1. 增加 EntryTable、MaskGen、AddrGen、SplitCtrl、MergeCtrl 单元测试。
+2. 增加 masked/tail/vstart、ordered indexed、NACK、异常和 redirect 随机测试。
+3. 运行 standalone RTL 生成并检查 reset tree、组合环和时序路径。
+4. 评估固定 lane 仲裁带来的吞吐损失，再决定是否升级为跨 unit 仲裁。
+
+---
+
+## 相关文件
+
+| 范围 | 文件 |
 |---|---|
-| `mem/vector/VAGQDownstreamAdapter.scala` | VAGQ active load req 与普通 `issueLda` 的 `robIdx` 仲裁；把 active load req 转成 LDU `ExuInput`；透传 LDU response 和 LSQ-empty req/resp |
-| `mem/pipeline/Bundles.scala` | 定义 `VAGQMemPipelineMeta`，在 load/store pipeline 内携带 `entryIdx/robIdx/byteOffset/mask` 等 VAGQ 元信息 |
-| `mem/pipeline/NewLoadUnit.scala` | 识别 VAGQ load，生成 `VAGQResp`，NACK 时交由 VAGQ 清 `reqSent` 重发，成功时通过普通 vector load VRF 写口写 active 数据 |
-| `mem/pipeline/NewStoreUnit.scala` | 已有 VAGQ metadata 和 `VAGQResp` 支持，但当前 MemBlock 尚未向 STA 送 VAGQ active store req |
-| `mem/MemBlock.scala` | 例化 VAGQ 和 downstream adapter；连接 LDU active load、LDU response、LSQ-empty path；上游和 VRF/ROB 仍 tie-off |
-
-### 相关 LSQ 文件
-
-| 文件 | 当前职责 |
-|---|---|
-| `mem/lsqueue/LSQBundle.scala` | 定义 `LqEmptyMarkReq` / `SqEmptyMarkReq`，以及 SQ empty mark 端口 |
-| `mem/lsqueue/LSQWrapper.scala` | 接收 `VAGQLsqEmptyReq`，分发到 LQ/SQ，并把 mark success 转成 `VAGQLsqEmptyResp.isNACK` |
-| `mem/lsqueue/LoadQueue.scala` / `VirtualLoadQueue.scala` | 接收 load empty mark，确认 `allocated/isvec/robIdx/lqBaseIdx/!needCancel` 后置 `committed` |
-| `mem/lsqueue/NewStoreQueue.scala` | 接收 store empty mark，确认 `allocated/isVec/robIdx/sqBaseIdx/!needCancel/!targetDeqCancel` 后置 `vecInactive` |
-| `mem/MemBlock.scala` | 当前已将 `vagqDownstream.io.lsqEmptyReq` 接入 `lsq.io.lsqEmptyReq`，并把 `lsq.io.lsqEmptyResp` 返回 VAGQ |
-
-### 核心能力
-
-- `VLEN` 当前固定为 128 bit，单个 VAGQ flow 为 16 byte。
-- `VAGQSize` 当前常量为 8，entry index 宽度由 `VAGQConstants.VAGQSize` 推导。
-- `ActiveIssueWidth=2`，`LduRespWidth=3`，`StaRespWidth=2`，`MergeRespWidth=6`。
-- 每个 entry 使用 `reqSent` / `reqAck` 两个 16 bit bitmap 跟踪每个 byte lane 的请求状态。
-- entry 状态已覆盖 `waitA`、`waitSI`、`split`、`merge`、`wb`、`excp`。
-- 地址侧和数据侧可以乱序到达同一个 entry：只有地址侧先到进入 `waitSI`，只有数据侧先到进入 `waitA`，两侧齐备后进入 `split`。
-- `SplitCtrl` active/empty 入口都通过 `oldestEntryOH` 按 `robIdx/uopIdx/entryIdx` 选择最老 entry；active lane0 选最低位 active 元素，lane1 从剩余 active mask 中选最高位 active 元素。
-- `SplitCtrl` empty 路径会把一个 entry 中尚未发送、尚未 ACK 的非 active byte 合成一个 `lsqEmptyReq`，用于 prestart/inactive/tail 的 LSQ 空项标记。
-- active 路径和 empty 路径各自有独立 `splitUpdate`，同拍 fire 时分别置位对应 `reqSent` bitmap。
-- ordered indexed entry 在已有 active 请求未 ACK 时会阻止继续发新的 active 请求。
-- `MergeCtrl` 接受 3 路 LDU response、2 路 STA response 和 1 路 LSQ-empty response；只接受 `entryIdx` 有效且 `robIdx` 匹配当前 live entry 的响应，避免旧响应误更新新 entry。
-- `EntryTable` 对多路 exception update 使用 `PriorityMux` 选出唯一异常写入 entry；当前优先级来自 update lane 顺序，不额外比较 `faultElemIdx`。
-- load merge 当前生成完整 128 bit 写回数据，并用 `~elemActiveMask` 作为 VRF 写 mask，只覆盖非 active byte；active load data 由 `LoadUnit` 使用普通 vector load VRF 写口写回。
-- 异常路径会记录本 uop 内的 fault byte offset，并在 ROB 写回时换算为架构元素序号 `faultVstart`。
-- redirect 会在 entry 表、split 候选、merge/writeback 候选路径上过滤或清除被冲刷 entry。
-- LSQ empty mark 成功条件会确认目标 LQ/SQ entry 仍分配、是 vector 项、`robIdx` 和 base `lqIdx/sqIdx` 匹配，且未被 flush/cancel；失败时返回 NACK，VAGQ 清除对应 `reqSent` 并允许重试。
-- `VAGQDownstreamAdapter` 当前只处理 load active req：lane0/lane1 分别和 `issueLda0/issueLda1` 比较 `robIdx`，更老者进入 `LoadUnit0/1`；`issueLda2` 直接进入 `LoadUnit2`。
-- `VAGQDownstreamAdapter` 当前不处理 store active req，`vagqStaResp` 全部置 invalid。
-- `MemBlock` 当前把 `vagq.io.addrUop`、`dataUop`、`vrfReadReq/Resp`、`robWriteback.ready` 仍 tie-off，因此 VAGQ 尚未端到端执行真实指令。
-
----
-
-## 当前未完成项
-
-- 当前仓库还没有后端 issue/dispatch 到 VAGQ 的上游接入；`MemBlock` 中 `addrUop/dataUop` 仍置 invalid。
-- `VAGQLsuReq` 当前只携带精简请求字段，没有完整 `DynInst`；load adapter 只补了 LDU 当前能跑通的 `ExuInput` 字段，后续若 STA/异常/debug 需要更多上下文还要继续补齐。
-- active load 下游已部分接入，但只覆盖 `vagqLsuReq(0/1)` 到 `LoadUnit0/1`；没有实现“从所有普通 load + active load 中选全局最老 3 个”的完整仲裁。
-- active store 下游未接入：adapter 没有把 store req 转成 STA input，`MemBlock` 也仍给 `StoreUnit.vagqReqMeta` 接 0。
-- `SplitCtrl` 已能通过 VAGQ VRF read 读取 store data，但 `MemBlock` 当前没有连接 VAGQ VRF read/write 接口，store data read 和 load non-active merge 在系统级不可用。
-- `VAGQ.robWriteback` 当前在 `MemBlock` 中 `ready := false.B`，VAGQ 完成/异常写回和 release 尚未系统级接入。
-- 当前没有 `SegmentCtrl.scala`；`nf` 只在 VAGQ bundle/request 中透传，segment zip/unzip 或按 segment 字段的完整语义还没有实现验证。
-- standalone RTL 生成入口已经加入，但当前工作树没有保留 `vagq/VAGQ.fir` 或 `VAGQ.sv` 产物。此前使用 `/nfs/home/share/firtool-1.74.0/bin/firtool` 时会卡在 Chisel 7 `layer Verification` FIRRTL 语法，需换用匹配 Chisel 7 的更新版 firtool 后再验证。
-- 尚未看到针对 VAGQ 的单元测试、随机测试或完整仿真回归记录。
-
----
-
-## 决策记录
-
-| # | 决策 | 日期 |
-|---|---|---|
-| 1 | 复用 StaIQ + StdIQ/VStdIQ，vlsa/vlss 配对 | 2026-06-04 |
-| 2 | N 可配置，bitmap (16b) 追踪至多 16 flow | 2026-06-04 |
-| 3 | Unit-Stride 不进 VAGQ，保留原 VLSU 通路 | 2026-06-04 |
-| 4 | Segment 合并到 VAGQ 作为正交维度 (nf=2~8) | 2026-06-04 |
-| 5 | VAGQ 不处理非对齐/跨页 | 2026-06-04 |
-| 6 | 当前实现先落地 VAGQ 核心模块，暂未完成上游/下游流水线集成 | 2026-06-29 |
-| 7 | 当前实现中 `faultElemIdx` 是 16B flow 内 byte offset，ROB 写回时再换算为元素级 `faultVstart` | 2026-06-29 |
-| 8 | 当前实现与早期计划不同：尚未实现 decode 阶段显式拆成地址侧/数据侧 uop 的全链路方案 | 2026-06-29 |
-| 9 | VAGQ LSQ-empty req 使用 `emptyMask` 维护 VAGQ byte 状态，使用 `entryMask` 标记 LSQ entry；LSQ match 失败返回 NACK | 2026-07-02 |
-| 10 | active req 当前一拍最多发两路，`SplitUpdateWidth=2` 表示 active update 和 empty update 两路状态更新源 | 2026-07-02 |
-| 11 | 当前 VAGQ 下游接入采用 `VAGQDownstreamAdapter`：active load req0/1 分别与普通 LDU0/1 请求按 `robIdx` 仲裁，LDU2 不参与 VAGQ 仲裁 | 2026-07-06 |
-| 12 | 当前 response 宽度拆成 `LduRespWidth=3` 和 `StaRespWidth=2`；`MergeCtrl` 加上 LSQ-empty response 后共处理 6 路 update | 2026-07-06 |
-| 13 | 当前 active store 的 STA 接入、VAGQ VRF 接入、ROB 写回/release 接入仍未完成 | 2026-07-06 |
-
----
-
-## 下一步建议
-
-1. 先打通最小上游路径：在 dispatch/issue payload 中携带 `entryIdx/uopIdx/psrc2`，把 strided/indexed vector memory uop 送入 VAGQ。
-2. 接入 VAGQ VRF read/write：让 store data read、load old-vd merge 和非 active byte masked write 真正连到 VRF。
-3. 接入 ROB 写回和 release：让 `robWriteback` 被系统消费，并在完成/异常/flush 后释放对应 VAGQ entry。
-4. 接入 active store 下游路径：把 `VAGQLsuReq` store 转成 STA input，连接 `StoreUnit.vagqReqMeta` 和 `vagqStaResp`。
-5. 评估是否需要把 load 仲裁从当前 lane-by-lane `robIdx` 仲裁升级为全局最老 3 个请求选择。
-6. 验证 load-only constant-stride，再扩展到 indexed unordered、indexed ordered、store、mask/tail/vstart、exception。
-7. 更换 firtool 版本后重新跑 `VAGQMain`，确认至少能生成 standalone RTL。
-
----
-
-## 经验教训
-
-- VAGQ.d2 是当前的拓扑图，不要误认为是旧的
-- Constant-Stride 和 Unit-Stride 是不同的 RISC-V 指令，不可混淆
-- Segment 是与访存类型正交的维度，原 VSegmentUnit 是设计失误
-- 设计文档本身是交付物，但进度文档必须区分“设计目标”和“当前代码已实现”
-- skill 里的快照可能比当前工作树更超前，落文档前必须用 `rg` 核对仓库实际文件
-
-(待补充)
+| VAGQ core | `backend/vector/vagq/{Vagq,EntryTable,MaskGen,AddrGen,SplitCtrl,MergeCtrl,VAGQUtils}.scala` |
+| 地址侧上游 | `backend/Region.scala` |
+| indexed 数据侧 | `backend/vector/{IssuePipe,VecRegionModule}.scala` |
+| 顶层跨区连线 | `backend/Backend.scala` |
+| MemBlock 与仲裁 | `mem/MemBlock.scala`, `mem/vector/VAGQDownstreamAdapter.scala` |
+| LDU/STA | `mem/pipeline/{Bundles,NewLoadUnit,NewStoreUnit}.scala` |
+| LSQ empty mark | `mem/lsqueue/{LSQWrapper,LoadQueue,VirtualLoadQueue,NewStoreQueue,LSQBundle}.scala` |
+| ROB | `backend/{BackendParams,CtrlBlock}.scala`, `backend/rob/{Rob,ExceptionGen}.scala` |

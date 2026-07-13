@@ -1,59 +1,56 @@
-# VAGQ IO 接口说明
+# VAGQ IO 与当前实现说明
 
-> 最后更新: 2026-07-06
+> 最后更新: 2026-07-13
 >
-> 对应代码: `src/main/scala/xiangshan/backend/vector/vagq/`
+> 对应实现: `src/main/scala/xiangshan/backend/vector/vagq/`、`src/main/scala/xiangshan/mem/vector/VAGQDownstreamAdapter.scala`
 
 ---
 
-## 0. 当前范围
+## 0. 文档范围
 
-本文描述当前仓库中已经落地的 VAGQ core、本地 MemBlock 接入接口，以及 LSQ empty mark 相关 IO，包括:
+本文描述当前源码中的实际接口和行为，包括:
 
-- `VAGQ`
-- `VAGQEntryTable`
-- `MaskGen`
-- `AddrGen`
-- `SplitCtrl`
-- `MergeCtrl`
-- `VAGQDownstreamAdapter`
-- `VAGQMemPipelineMeta`
-- `LSQWrapper` / LQ / SQ empty mark 接口
+- VAGQ core: `VAGQEntryTable`、`MaskGen`、`AddrGen`、`SplitCtrl`、`MergeCtrl`
+- 上游: StaIQ 地址侧、整数 STD stride 数据侧、VStdIQ indexed 数据侧
+- 下游: LDU、STA/STD、LSQ empty mark
+- VRF: active load 普通写口、non-active merge 专用读写口
+- ROB: VAGQ 独立 writeback 口
 
-当前仍未落地的上游 issue/dispatch 接入、VAGQ VRF 系统级读写接入、ROB writeback/release 接入只在本文“当前系统级接入状态”中说明，不作为完整接口方案。
+当前代码已经完成结构连线，但 `entryIdx`、`psrc2` 和 active store data 仍有未完成项。接口存在不等于对应指令已经端到端正确执行，完整状态见 `progress.md`。
 
 ---
 
-## 1. 全局参数和宽度
+## 1. 参数
 
 定义位置: `Vagq.scala`
 
 | 常量 | 当前值 | 含义 |
 |---|---:|---|
-| `VAGQSize` | 8 | VAGQ entry 数量 |
-| `VAGQEntryIdxWidth` | 3 | entry index 宽度，`log2Ceil(VAGQSize)` |
-| `FlowBytes` | 16 | 单个 VAGQ flow / uop slice 的 byte 数 |
-| `FlowByteWidth` | 4 | 16B flow 内 byte offset 宽度 |
-| `UvlByteWidth` | 5 | flow 内有效 byte 数宽度，可表示 0 到 16 |
-| `UopIdxWidth` | 3 | 当前指令内 uop slice index 宽度 |
-| `FaultVstartWidth` | 7 | 异常元素序号宽度，`UopIdxWidth + FlowByteWidth` |
-| `EewWidth` | 2 | EEW 编码宽度，`0/1/2/3` 对应 8/16/32/64 bit |
-| `AlignedTypeWidth` | 3 | 请求对齐类型宽度，当前由 `deew` 填入 |
-| `NfWidth` | 3 | segment field `nf` 宽度 |
+| `VAGQSize` | 8 | entry 数量 |
+| `VAGQEntryIdxWidth` | 3 | entry index 宽度 |
+| `FlowBytes` | 16 | 每个 VAGQ uop slice 的 byte 数 |
+| `FlowByteWidth` | 4 | flow 内 byte offset 宽度 |
+| `UvlByteWidth` | 5 | 0 到 16 byte 的计数宽度 |
+| `UopIdxWidth` | 3 | 指令内 uop slice index 宽度 |
+| `FaultVstartWidth` | 7 | `uopIdx` 与 flow 内 fault offset 转换后的宽度 |
+| `EewWidth` | 2 | EEW 编码，0/1/2/3 对应 8/16/32/64 bit |
+| `AlignedTypeWidth` | 3 | LDU/STA 请求宽度编码 |
+| `NfWidth` | 3 | segment `nf` 字段宽度 |
 | `ExceptionNumberWidth` | 6 | 异常号宽度 |
-| `ActiveIssueWidth` | 2 | VAGQ active `lsuReq` 发射 lane 数量 |
-| `LduRespWidth` | 3 | LDU 返回给 VAGQ 的 response lane 数量，对应 3 个 load unit |
-| `StaRespWidth` | 2 | STA 返回给 VAGQ 的 response lane 数量，对应 2 个 store unit |
-| `ActiveRespWidth` | 5 | active response 总路数，`LduRespWidth + StaRespWidth` |
-| `VrfWriteWidth` | 1 | VAGQ core 当前定义的 VRF write 宽度，目前顶层 IO 是单路 `ValidIO` |
-| `SplitUpdateWidth` | 2 | SplitCtrl 到 EntryTable 的状态更新路数：active update + empty update |
-| `MergeRespWidth` | 6 | MergeCtrl 接收的 response lane 数量，等于 3 个 `lduResp` + 2 个 `staResp` + 1 个 `lsqEmptyResp` |
+| `AddrIssueWidth` | 2 | 地址侧输入 lane 数 |
+| `DataIssueWidth` | 4 | 数据侧输入 lane 数，2 路 STD + 2 路 VStd |
+| `ActiveIssueWidth` | 2 | active LSU 请求 lane 数 |
+| `LduRespWidth` | 3 | LDU response lane 数 |
+| `StaRespWidth` | 2 | STA response lane 数 |
+| `MergeRespWidth` | 6 | 3 LDU + 2 STA + 1 LSQ empty |
+| `SplitUpdateWidth` | 2 | active 与 empty 两路 bitmap update |
 
-当前硬约束:
+硬约束:
 
 - `VLEN == 128`
-- `VDataBytes == FlowBytes`
+- `VDataBytes == FlowBytes == 16`
 - `VAGQSize == 4 || VAGQSize == 8`
+- 当前 `SplitCtrl` 实际按两路 active request 编写，不能只改常量扩展宽度
 
 ---
 
@@ -61,636 +58,589 @@
 
 ### 2.1 `VAGQMeta`
 
-定义位置: `Vagq.scala`
-
-VAGQ entry 中随指令保存的元信息，用于后续写回或异常报告。
+随地址侧 uop 保存，用于 LSQ 定位、ROB 写回和调试。
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
 | `pc` | `UInt(VAddrBits.W)` | 指令 PC |
-| `isRVC` | `Bool` | 是否为 RVC 压缩指令 |
+| `isRVC` | `Bool` | 是否为压缩指令 |
 | `ftqPtr` | `FtqPtr` | FTQ 指针 |
-| `ftqOffset` | `UInt(FetchBlockInstOffsetWidth.W)` | fetch block 内指令偏移 |
-| `lqIdx` | `LqPtr` | LoadQueue 预留表项指针 |
-| `sqIdx` | `SqPtr` | StoreQueue 预留表项指针 |
-| `trigger` | `TriggerAction()` | trigger/debug 相关信息 |
+| `ftqOffset` | `UInt` | fetch block 内偏移 |
+| `lqIdx` | `LqPtr` | 当前 uop 的 LQ base pointer |
+| `sqIdx` | `SqPtr` | 当前 uop 的 SQ base pointer |
+| `trigger` | `TriggerAction` | trigger 信息 |
 | `perfDebugInfo` | `PerfDebugInfo` | 性能调试信息 |
-| `debug_seqNum` | `InstSeqNum()` | difftest/debug 序号 |
+| `debug_seqNum` | `InstSeqNum` | debug/difftest 序号 |
 
 ### 2.2 `VAGQAddrSideUop`
 
-地址侧 uop，进入 `VAGQ.io.addrUop` / `VAGQEntryTable.io.addrUop`。
-
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `meta` | `VAGQMeta` | 写回和异常路径需要的原始指令元信息 |
-| `entryIdx` | `UInt(vagqEntryIdxWidth.W)` | 目标 VAGQ entry |
-| `uopType` | `UInt(3.W)` | VAGQ 操作类型，见 `VAGQUopType` |
-| `robIdx` | `RobPtr` | ROB index，用于 redirect 过滤、response 匹配、写回 |
-| `pdest` | `UInt(VfPhyRegIdxWidth.W)` | load 目标向量物理寄存器 |
-| `baseAddr` | `UInt(XLEN.W)` | base 地址 |
-| `uvlByte` | `UInt(5.W)` | 当前 uop slice 内 `vl` 覆盖到的有效 byte 数 |
-| `vstart` | `UInt((CSRConfig.VlWidth-1).W)` | 架构 `vstart`，只在 `useVstart` 为真时参与 mask 生成 |
-| `useVstart` | `Bool` | 是否考虑 `vstart` prestart 区域 |
-| `vm` | `Bool` | vector mask enable，`1` 表示不受 `v0Mask` 抑制 |
-| `v0Mask` | `UInt(vagqFlowBytes.W)` | 当前 16B flow 对应的 v0 mask 位 |
-| `deew` | `UInt(EewWidth.W)` | data element width 编码 |
-| `ieew` | `UInt(EewWidth.W)` | indexed element width 编码 |
-| `vma` | `Bool` | mask agnostic 策略位 |
-| `vta` | `Bool` | tail agnostic 策略位 |
-| `uopIdx` | `UInt(UopIdxWidth.W)` | 当前 uop slice 在原始 vector 指令内的序号 |
-| `nf` | `UInt(NfWidth.W)` | segment field，当前仅透传 |
-
-### 2.3 `VAGQDataSideUop`
-
-数据侧 uop，进入 `VAGQ.io.dataUop` / `VAGQEntryTable.io.dataUop`。
-
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `entryIdx` | `UInt(vagqEntryIdxWidth.W)` | 目标 VAGQ entry，需要与地址侧 uop 一致 |
-| `robIdx` | `RobPtr` | ROB index，用于 redirect 过滤和 response 匹配 |
-| `op2Data` | `UInt(VLEN.W)` | stride 值或 indexed offset vector 原始数据；由数据侧写入 entry |
-| `psrc2` | `UInt(VfPhyRegIdxWidth.W)` | load merge 读旧 `vd` 的源寄存器；store data 的源寄存器 |
-
-### 2.4 `VAGQReqBase`
-
-`VAGQLsuReq` 的公共基础字段。`VAGQLsqEmptyReq` 当前是独立 bundle，不继承该 base。
-
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `entryIdx` | `UInt(vagqEntryIdxWidth.W)` | 请求所属 VAGQ entry |
-| `robIdx` | `RobPtr` | 请求所属 ROB index，response 返回后必须匹配 live entry |
-| `lqIdx` | `LqPtr` | 对应 LoadQueue 预留表项 |
-| `sqIdx` | `SqPtr` | 对应 StoreQueue 预留表项 |
-
-### 2.5 `VAGQLsuReq`
-
-active byte/element 对应的真实访存请求，继承 `VAGQReqBase`。
-
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `isLoad` | `Bool` | 当前请求来自 load 类 VAGQ uop |
-| `isStore` | `Bool` | 当前请求来自 store 类 VAGQ uop |
-| `byteOffset` | `UInt(vagqFlowByteWidth.W)` | 16B flow 内被选中的第一个 byte offset |
-| `elemIdx` | `UInt(vagqFlowByteWidth.W)` | 16B flow 内元素 index，当前由 `byteOffset >> deew` 生成 |
-| `mask` | `UInt(vagqFlowBytes.W)` | 当前 active 元素覆盖的 byte mask |
-| `alignedType` | `UInt(AlignedTypeWidth.W)` | 对齐/访问宽度类型，当前由 `deew` 填入 |
-| `vaddr` | `UInt(XLEN.W)` | `AddrGen` 生成后的虚拟地址 |
-| `data` | `UInt(VLEN.W)` | store data；由 `SplitCtrl` 的 store-data 读路径缓存后填入 |
-| `pdest` | `UInt(VfPhyRegIdxWidth.W)` | load 目标向量物理寄存器 |
-| `nf` | `UInt(NfWidth.W)` | segment field，当前透传 |
-
-### 2.6 `VAGQLsqEmptyReq`
-
-inactive/prestart/tail byte 对应的空请求。它不进入 AddrGen/LDU/STA，只用于让 LSQ 标记已经预留但没有真实访存的 LQ/SQ 项。
-
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `entryIdx` | `UInt(vagqEntryIdxWidth.W)` | 请求所属 VAGQ entry |
-| `robIdx` | `RobPtr` | 请求所属 ROB index，response 返回后必须匹配 live entry |
-| `isLoad` | `Bool` | 标记 LoadQueue 项 |
-| `isStore` | `Bool` | 标记 StoreQueue 项 |
-| `lqIdx` | `LqPtr` | LoadQueue 预留表项 base 指针 |
-| `sqIdx` | `SqPtr` | StoreQueue 预留表项 base 指针 |
-| `emptyMask` | `UInt(vagqFlowBytes.W)` | VAGQ byte 级 mask，用于 response ACK/NACK 后更新 `reqSent/reqAck` |
-| `entryMask` | `UInt(vagqFlowBytes.W)` | LSQ entry/元素级 mask，由 `emptyMask` 按 `deew` 转换得到，用于标记 `lqIdx/sqIdx + i` |
-
-### 2.7 `VAGQLsqEmptyResp`
-
-LSQ empty mark 的反馈。VAGQ 顶层会把它转换为内部 `VAGQResp` 后送入 `MergeCtrl`。
-
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `entryIdx` | `UInt(vagqEntryIdxWidth.W)` | response 对应的 VAGQ entry |
-| `robIdx` | `RobPtr` | response 对应 ROB index |
-| `isLoad` | `Bool` | response 来自 LoadQueue empty mark |
-| `isStore` | `Bool` | response 来自 StoreQueue empty mark |
-| `mask` | `UInt(vagqFlowBytes.W)` | ACK/NACK 覆盖的 VAGQ byte mask，通常等于 request 的 `emptyMask` |
-| `isNACK` | `Bool` | LSQ 没有成功标记，VAGQ 需要清除 `reqSent` 并重试 |
-| `exception` | `Bool` | 当前 LSQ empty mark 不产生架构异常，通常为 0 |
-| `exceptionNumber` | `UInt(ExceptionNumberWidth.W)` | 当前通常为 0 |
-
-### 2.8 `VAGQResp`
-
-VAGQ active 请求的反馈，也是 `MergeCtrl` 内部统一处理 active response 和转换后 empty response 的格式。
-
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `entryIdx` | `UInt(vagqEntryIdxWidth.W)` | response 对应的 VAGQ entry |
-| `robIdx` | `RobPtr` | response 对应 ROB index；必须和 entry 内 `robIdx` 匹配才会被接受 |
-| `isLoad` | `Bool` | response 来自 load 请求 |
-| `isStore` | `Bool` | response 来自 store 请求 |
-| `byteOffset` | `UInt(vagqFlowByteWidth.W)` | response 对应的 16B flow 内 byte offset |
-| `mask` | `UInt(vagqFlowBytes.W)` | ACK/NACK/exception 覆盖的 byte mask |
-| `data` | `UInt(VLEN.W)` | load 返回数据；当前 `MergeCtrl` 未收集该字段到 entry |
-| `isNACK` | `Bool` | 请求需要重发 |
-| `exception` | `Bool` | 请求产生异常 |
-| `exceptionNumber` | `UInt(ExceptionNumberWidth.W)` | 异常号 |
-
-### 2.9 VRF 和 ROB Bundle
-
-| Bundle | 字段 | 含义 |
-|---|---|---|
-| `VAGQVRFReadReq` | `entryIdx`, `robIdx`, `psrc` | `SplitCtrl` 为 store 读 store data，或 `MergeCtrl` 为 load merge 读旧 `vd` |
-| `VAGQVRFReadResp` | `entryIdx`, `robIdx`, `data` | VRF 读返回数据 |
-| `VAGQVRFWriteReq` | `entryIdx`, `pdest`, `data`, `mask` | merge 后写回非 active byte；当前没有 `robIdx` 字段 |
-| `VAGQWritebackReq` | `meta`, `entryIdx`, `robIdx`, `exception`, `exceptionNumber`, `faultElemIdx`, `faultVstart` | VAGQ 正常完成或异常完成写回 |
-
-`faultElemIdx` 是当前 16B flow 内的 byte offset。`faultVstart` 是换算后的架构元素序号。
-
-### 2.10 entry 和控制 Bundle
-
-| Bundle | 字段 | 含义 |
-|---|---|---|
-| `CtrlInput` | `entryIdx`, `entry` | 给 `SplitCtrl` / `MergeCtrl` 观察 entry 表项 |
-| `VAGQMaskInfo` | `elemActiveMask`, `elemAgnosticMask` | `MaskGen` 输出的 active byte mask 和 agnostic byte mask |
-| `VAGQEntryStateUpdate` | `entryIdx`, `stateNext`, `clearValid` | `MergeCtrl` 对 entry 状态或 valid 位的更新 |
-| `VAGQReqBitmapUpdate` | `entryIdx`, `setReqSent`, `clearReqSent`, `setReqAck`, `exception`, `exceptionNumber`, `faultElemIdx` | `SplitCtrl` / `MergeCtrl` 对 `reqSent/reqAck/exception` 的更新 |
-
----
-
-## 3. 顶层 `VAGQ` IO
-
-定义位置: `Vagq.scala`
-
-| 信号 | 方向 | 类型 | 说明 |
-|---|---|---|---|
-| `addrUop` | input decoupled | `Flipped(Decoupled[VAGQAddrSideUop])` | 地址侧 uop 输入。fire 后写入目标 entry 的地址、mask、类型、ROB 等字段 |
-| `dataUop` | input decoupled | `Flipped(Decoupled[VAGQDataSideUop])` | 数据侧 uop 输入。fire 后写入目标 entry 的 `op2Data`、`psrc2` 等字段 |
-| `lsuReq` | output decoupled vec | `Vec(ActiveIssueWidth, Decoupled[VAGQLsuReq])` | active 元素对应的访存请求，一拍最多两路 |
-| `lduResp` | input valid vec | `Flipped(Vec(LduRespWidth, Valid[VAGQResp]))` | LDU 返回的 active load ACK/NACK/exception response |
-| `staResp` | input valid vec | `Flipped(Vec(StaRespWidth, Valid[VAGQResp]))` | STA 返回的 active store ACK/NACK/exception response |
-| `lsqEmptyReq` | output decoupled | `Decoupled[VAGQLsqEmptyReq]` | 非 active byte 对应的空请求 |
-| `lsqEmptyResp` | input valid | `Flipped(Valid[VAGQLsqEmptyResp])` | 空请求的 ACK/NACK response |
-| `vrfReadReq` | output decoupled | `Decoupled[VAGQVRFReadReq]` | VRF 读请求，由 `SplitCtrl` store-data read 和 `MergeCtrl` old-vd read 仲裁后输出 |
-| `vrfReadResp` | input valid | `Flipped(Valid[VAGQVRFReadResp])` | VRF 读返回数据，同时送给 `SplitCtrl` 和 `MergeCtrl`，各自用 pending entry 过滤 |
-| `vrfWriteReq` | output valid | `ValidIO[VAGQVRFWriteReq]` | load merge 阶段写回非 active byte；当前没有 ready 反压 |
-| `robWriteback` | output decoupled | `Decoupled[VAGQWritebackReq]` | VAGQ uop 正常完成或异常完成后写回 |
-| `redirect` | input valid | `Flipped(Valid[Redirect])` | redirect/flush 信号，用于过滤请求、响应和清除 entry |
-
-顶层内部连线关系:
-
-- `addrUop/dataUop` 直接接入 `VAGQEntryTable`。
-- `VAGQEntryTable` 内部实例化 `MaskGen`，地址侧 fire 时写入 `elemActiveMask/elemAgnosticMask`。
-- `VAGQEntryTable.entries` 同时供 `SplitCtrl` 和 `MergeCtrl` 观察。
-- `SplitCtrl` 生成 `lsuReq`、`lsqEmptyReq`、store-data `vrfReadReq` 和 `splitUpdate`。
-- 顶层把 `VAGQLsqEmptyResp` 转换为内部 `VAGQResp`，再交给 `MergeCtrl.lsqEmptyResp`。
-- `MergeCtrl` 消费 `lduResp`、`staResp`、`lsqEmptyResp`、`vrfReadResp`，生成 `reqUpdate`、`stateUpdate`、merge `vrfReadReq`、`vrfWriteReq`、`robWriteback`。
-- 顶层用 `lastVrfReadGrantSplit` 在 `SplitCtrl.vrfReadReq` 和 `MergeCtrl.vrfReadReq` 之间做轮转仲裁。
-- `VAGQEntryTable` 是 entry 寄存器的唯一写入点，统一合并 `splitUpdate`、`mergeReqUpdate` 和 `mergeStateUpdate`。
-
----
-
-## 4. 内部模块 IO
-
-### 4.1 `MaskGen`
-
-定义位置: `MaskGen.scala`
-
-| 信号 | 方向 | 类型 | 说明 |
-|---|---|---|---|
-| `in` | input | `MaskGenInput` | 地址侧 uop 的 mask 相关字段 |
-| `out` | output | `VAGQMaskInfo` | 写入 entry 的 byte mask 信息 |
-
-`MaskGenInput` 字段:
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `uopIdx` | `UInt(vagqUopIdxWidth.W)` | 当前 uop slice 序号 |
-| `useVstart` | `Bool` | 是否启用 `vstart` prestart 逻辑 |
-| `vstart` | `UInt((CSRConfig.VlWidth-1).W)` | 架构 `vstart` |
-| `uvlByte` | `UInt(5.W)` | 当前 slice 内 `vl` 覆盖的 byte 上界 |
-| `vm` | `Bool` | mask enable，`1` 表示所有非 prestart/tail byte 都 active |
-| `v0Mask` | `UInt(vagqFlowBytes.W)` | 当前 flow 对应的 v0 mask |
-| `deew` | `UInt(EewWidth.W)` | data element width |
-| `vma` | `Bool` | inactive byte 是否 agnostic |
-| `vta` | `Bool` | tail byte 是否 agnostic |
-
-`VAGQMaskInfo` 字段:
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `elemActiveMask` | `UInt(vagqFlowBytes.W)` | active byte mask；SplitCtrl 只对这些 byte 发真实请求 |
-| `elemAgnosticMask` | `UInt(vagqFlowBytes.W)` | inactive/tail 且允许 agnostic 的 byte mask；MergeCtrl 用它决定是否写全 1 |
-
-mask 判定规则:
-
-- `prestart`: `byteIdx < uvstartByte`
-- `tail`: 非 prestart 且 `byteIdx >= uvlByte`
-- `inactive`: 非 prestart、非 tail，且 `vm=0` 且对应 v0 mask bit 为 0
-- `active`: 非 prestart、非 tail，且 `vm=1` 或对应 v0 mask bit 为 1
-- `elemAgnosticMask = inactiveBits & vma | tailBits & vta`
-
-### 4.2 `AddrGen`
-
-定义位置: `AddrGen.scala`
-
-| 信号 | 方向 | 类型 | 说明 |
-|---|---|---|---|
-| `in` | input | `AddrGenInput` | entry 中地址生成所需字段和当前 selected byte offset |
-| `out` | output | `AddrGenOutput` | 当前元素的地址、元素序号和 byte mask |
-
-`AddrGenInput` 字段:
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `uopType` | `UInt(3.W)` | 判断 stride 还是 indexed |
-| `baseAddr` | `UInt(XLEN.W)` | base 地址 |
-| `op2Data` | `UInt(VLEN.W)` | stride 值或 indexed offset vector |
-| `uopIdx` | `UInt(vagqUopIdxWidth.W)` | 当前 uop slice index |
-| `byteOffset` | `UInt(vagqFlowByteWidth.W)` | 当前被选择的 byte offset |
-| `deew` | `UInt(EewWidth.W)` | data element width |
-| `ieew` | `UInt(EewWidth.W)` | indexed element width |
-
-`AddrGenOutput` 字段:
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `vaddr` | `UInt(XLEN.W)` | `baseAddr + offset` |
-| `byteOffset` | `UInt(vagqFlowByteWidth.W)` | 透传输入 byte offset |
-| `elemIdx` | `UInt(vagqFlowByteWidth.W)` | 当前 16B flow 内元素 index，`byteOffset >> deew` |
-| `elemMask` | `UInt(vagqFlowBytes.W)` | 当前元素覆盖的 byte mask |
-
-地址生成规则:
-
-- `elemBytes = 1 << deew`
-- `elemIdx = byteOffset >> deew`
-- `elemOrdFromInst = (uopIdx << elemNum(deew)) | elemIdx`
-- stride: `offset = op2Data(XLEN-1,0).asSInt * elemOrdFromInst.asSInt`
-- indexed: 从 `op2Data` 里按 `ieew` 和 `elemIdx` 选出 index offset，当前实现零扩展到 `XLEN`
-- `elemMask` 覆盖 `[byteOffset, byteOffset + elemBytes)` 范围内的 byte
-
-### 4.3 `VAGQEntryTable`
-
-定义位置: `EntryTable.scala`
-
-| 信号 | 方向 | 类型 | 说明 |
-|---|---|---|---|
-| `addrUop` | input decoupled | `Flipped(Decoupled[VAGQAddrSideUop])` | 地址侧 uop 写 entry |
-| `dataUop` | input decoupled | `Flipped(Decoupled[VAGQDataSideUop])` | 数据侧 uop 写 entry |
-| `entries` | output | `Vec(vagqSize, VAGQEntry)` | 当前 entry 表快照，给 SplitCtrl/MergeCtrl 观察 |
-| `splitUpdate` | input valid vec | `Vec(SplitUpdateWidth, Valid[VAGQReqBitmapUpdate])` | SplitCtrl 发请求后置位 `reqSent`，当前分 active update 和 empty update |
-| `mergeReqUpdate` | input valid vec | `Vec(MergeRespWidth, Valid[VAGQReqBitmapUpdate])` | MergeCtrl 根据 response 更新 `reqAck/reqSent/exception` |
-| `mergeStateUpdate` | input valid | `Valid[VAGQEntryStateUpdate]` | MergeCtrl 推进状态或释放 entry |
-| `redirect` | input valid | `Flipped(Valid[Redirect])` | 清除被 redirect flush 的 live entry |
-
-ready 条件:
-
-- `addrUop.ready = entryIdx valid && (entry 空闲 || entry.state == waitA) && entry 未被 redirect flush`
-- `dataUop.ready = entryIdx valid && (entry 空闲 || entry.state == waitSI) && entry 未被 redirect flush`
-
-写入和状态行为:
-
-- 地址侧先到空 entry: 写地址字段和 mask，状态进入 `waitSI`。
-- 数据侧先到空 entry: 写 `psrc2` 等数据侧字段，状态进入 `waitA`。
-- 两侧同拍到达同一个 entry，或后一侧补齐等待状态: 状态进入 `split`。
-- `splitUpdate` / `mergeReqUpdate` 统一更新 `reqSent`、`reqAck` 和异常字段。
-- `mergeStateUpdate.clearValid` 为真时释放 entry。
-- redirect 命中 live entry 时清空整个 entry。
-
-`VAGQEntryMeta` 主要字段:
+地址、控制和 mask 侧输入。
 
 | 字段 | 含义 |
 |---|---|
-| `valid` | entry 是否有效 |
-| `meta` | 原始指令元信息 |
-| `uopType` | stride/indexed/load/store/ordered 类型 |
-| `robIdx` | ROB index |
+| `meta` | `VAGQMeta` |
+| `entryIdx` | 目标 VAGQ entry |
+| `uopType` | stride/indexed、load/store、ordered 类型 |
+| `robIdx` | ROB pointer |
 | `pdest` | load 目标向量物理寄存器 |
-| `psrc2` | merge 读旧 `vd` 或 store data 源 |
-| `baseAddr` | base 地址 |
-| `op2Data` | stride 或 indexed offset 数据 |
-| `ieew`, `deew` | index/data element width |
-| `useVstart`, `vma`, `vta` | mask/tail/vstart 策略 |
-| `uopIdx` | 当前指令内 uop slice 序号 |
-| `elemActiveMask` | active byte mask |
-| `elemAgnosticMask` | agnostic byte mask |
-| `nf` | segment field，当前透传 |
-| `reqSent` | byte lane 是否已经发出请求 |
-| `reqAck` | byte lane 是否已经完成 |
-| `exceptionNumber` | 记录的异常号 |
-| `faultElemIdx` | 记录的 fault byte offset |
-| `state` | 当前 entry 状态 |
+| `baseAddr` | `x[rs1]` base address |
+| `uvlByte` | 当前 16B slice 内属于 `vl` 范围的 byte 数 |
+| `vstart`, `useVstart` | prestart mask 输入 |
+| `vm`, `v0Mask` | mask active 输入 |
+| `deew`, `ieew` | data/index EEW 编码 |
+| `vma`, `vta` | agnostic 策略 |
+| `uopIdx` | 当前 slice 序号 |
+| `nf` | segment field，当前主要透传 |
 
-entry 状态编码:
+当前 `buildVagqAddrUop` 从 `NewExuInput` 构造这些字段，但 `entryIdx := 0.U` 仍是 TODO。
 
-| 状态 | 编码 | 含义 |
+### 2.3 `VAGQDataSideUop`
+
+| 字段 | 类型 | 含义 |
 |---|---|---|
-| `waitA` | `001` | 已有数据侧，等待地址侧 |
-| `waitSI` | `010` | 已有地址侧，等待数据侧 |
-| `split` | `011` | 两侧齐备，正在拆成 byte/element 请求 |
-| `merge` | `100` | load 请求完成，正在 merge 旧 `vd` |
-| `wb` | `101` | 等待正常写回 |
-| `excp` | `110` | 等待异常写回 |
+| `entryIdx` | `UInt(3.W)` | 与地址侧配对的 entry |
+| `robIdx` | `RobPtr` | 用于 redirect 与配对检查 |
+| `op2Data` | `UInt(128.W)` | stride 值或 indexed offset vector |
+| `psrc2` | `UInt(VfPhyRegIdxWidth.W)` | load merge 读取旧 `vd` 的物理源；设计上也可用于 store data 源 |
+
+当前 stride/indexed 两个构造函数都写 `entryIdx := 0.U` 和 `psrc2 := 0.U`。
+
+### 2.4 `VAGQLsuReq`
+
+active 元素的真实访存请求。
+
+| 字段 | 含义 |
+|---|---|
+| `entryIdx`, `robIdx` | response 返回时定位并校验 live entry |
+| `isLoad`, `isStore` | 请求类型，必须二选一 |
+| `lqIdx`, `sqIdx` | 当前元素对应的 LSQ pointer，`base + elemIdx` |
+| `byteOffset` | 16B flow 内元素起始 byte offset |
+| `elemIdx` | flow 内元素 index，`byteOffset >> deew` |
+| `mask` | 当前元素覆盖的 byte mask |
+| `alignedType` | 当前由 zero-extended `deew` 生成 |
+| `vaddr` | `AddrGen` 结果 |
+| `data` | active store data；当前 `SplitCtrl` 固定输出 0，尚未完成 |
+| `pdest` | active load 目标向量物理寄存器 |
+| `nf` | segment field |
+
+### 2.5 `VAGQLsqEmptyReq/Resp`
+
+non-active 元素不进入 AddrGen/LDU/STA，而是通知 LSQ 消费预留项。
+
+Request 字段:
+
+| 字段 | 含义 |
+|---|---|
+| `entryIdx`, `robIdx` | VAGQ response tag |
+| `isLoad`, `isStore` | 选择 LQ 或 SQ |
+| `lqIdx`, `sqIdx` | LSQ base pointer |
+| `emptyMask` | VAGQ 的 16-bit byte mask，response 原样返回用于 bitmap update |
+| `entryMask` | 按 `deew` 将 byte mask 压缩后的 LSQ element mask |
+
+Response 字段:
+
+| 字段 | 含义 |
+|---|---|
+| `entryIdx`, `robIdx`, `isLoad`, `isStore` | request tag 回传 |
+| `mask` | request 的 `emptyMask` |
+| `isNACK` | LSQ match/mark 失败，需要 VAGQ 重发 |
+| `exception`, `exceptionNumber` | 当前 empty mark 固定不产生异常 |
+
+### 2.6 `VAGQResp`
+
+LDU/STA response 和 VAGQ 内部转换后的 empty response 使用同一格式。
+
+| 字段 | 含义 |
+|---|---|
+| `entryIdx`, `robIdx` | response tag |
+| `isLoad`, `isStore` | 来源类型 |
+| `byteOffset`, `mask` | 当前元素位置和覆盖 byte |
+| `data` | LDU 对齐后的 load data；MergeCtrl 当前不收集该字段 |
+| `isNACK` | 清对应 `reqSent`，允许重发 |
+| `exception`, `exceptionNumber` | 记录异常并进入 `excp` |
+
+### 2.7 VRF Bundle
+
+| Bundle | 字段 | 说明 |
+|---|---|---|
+| `VAGQVRFReadReq` | `entryIdx`, `robIdx`, `psrc` | merge 读取旧 `vd` |
+| `VAGQVRFReadResp` | `entryIdx`, `robIdx`, `data` | 一拍后返回 128-bit VRF 数据 |
+| `VAGQVRFWriteReq` | `entryIdx`, `pdest`, `data`, `mask` | 写 load non-active byte |
+
+这些接口都是 `Valid`，没有 `ready`。当前 VecRegion 为它们配置了独立读写端口。
+
+### 2.8 `VAGQWritebackReq`
+
+| 字段 | 含义 |
+|---|---|
+| `meta`, `entryIdx`, `robIdx` | ROB/LSQ/debug tag |
+| `exception`, `exceptionNumber` | 异常状态 |
+| `faultElemIdx` | 当前 16B flow 内的 fault byte offset |
+| `faultVstart` | 转换后的架构元素序号 |
+| `uopType`, `uopIdx`, `deew`, `nf` | vector memory exception 信息 |
+
+### 2.9 `VAGQMemPipelineMeta`
+
+Adapter 向 LDU/STA pipeline 旁带的 metadata。
+
+| 字段 | 含义 |
+|---|---|
+| `valid` | pipeline request 是否来自 VAGQ |
+| `entryIdx`, `robIdx` | response tag |
+| `isLoad`, `isStore` | 请求类型 |
+| `byteOffset`, `mask` | active 元素位置和 byte mask |
+
+普通 LDU/STA 请求的该 bundle 全 0。
+
+---
+
+## 3. `VAGQ` 顶层 IO
+
+| 信号 | 方向/协议 | 宽度 | 当前用途 |
+|---|---|---:|---|
+| `addrUop` | input `Decoupled` | 2 | 地址侧输入 |
+| `dataUop` | input `Decoupled` | 4 | stride/indexed 数据侧输入 |
+| `lsuReq` | output `Decoupled` | 2 | registered active request |
+| `lduResp` | input `Valid` | 3 | LDU ACK/NACK/exception |
+| `staResp` | input `Valid` | 2 | STA ACK/NACK/exception |
+| `lsqEmptyReq` | output `Decoupled` | 1 | registered empty mark request |
+| `lsqEmptyResp` | input `Valid` | 1 | empty mark ACK/NACK |
+| `vrfReadReq` | output `Valid` | 1 | merge old-`vd` read |
+| `vrfReadResp` | input `Valid` | 1 | old-`vd` read response |
+| `vrfWriteReq` | output `Valid` | 1 | non-active masked write |
+| `robWriteback` | output `Decoupled` | 1 | complete/exception writeback |
+| `redirect` | input `Valid` | 1 | flush/filter |
+
+顶层行为:
+
+- `EntryTable.entries` 同时送给 `SplitCtrl` 和 `MergeCtrl`。
+- `SplitCtrl` 的 active/empty 输出分别经过 `NewPipelineConnect` 一项寄存器，再成为顶层输出。
+- 寄存请求通过其 `robIdx.needFlush(redirect)` 精确 flush；redirect 当拍屏蔽输出 `valid`。
+- `splitUpdate` 在请求进入输出寄存器时更新 `reqSent`，不是等 LDU/STA 最终返回后才更新。
+- empty response 转成 `VAGQResp` 后进入 MergeCtrl。
+- 当前 VRF read 只来自 MergeCtrl；源码中的顶层注释仍提到 store read，但 SplitCtrl 已没有 VRF read 接口。
+
+---
+
+## 4. Core 内部模块
+
+### 4.1 `VAGQEntryTable`
+
+IO:
+
+| 信号 | 协议 | 说明 |
+|---|---|---|
+| `addrUop[2]` | input `Decoupled` | 写地址、控制和 mask 字段 |
+| `dataUop[4]` | input `Decoupled` | 写 `op2Data/psrc2` |
+| `entries[8]` | output | 给 Split/Merge 的快照 |
+| `splitUpdate[2]` | input `Valid` | 设置 active/empty `reqSent` |
+| `mergeReqUpdate[6]` | input `Valid` | ACK/NACK/exception 更新 |
+| `mergeStateUpdate` | input `Valid` | 状态推进或 clearValid |
+| `redirect` | input `Valid` | 清除被 flush entry |
+
+ready:
+
+```text
+addr.ready = idxValid && (!valid || state == waitA)  && !entryFlush
+data.ready = idxValid && (!valid || state == waitSI) && !entryFlush
+```
+
+状态:
+
+| 状态 | 含义 |
+|---|---|
+| `valid=0` | free；其他 payload/state 都是 don't-care |
+| `waitA` | 已有 data side，等待 address side |
+| `waitSI` | 已有 address side，等待 stride/index data side |
+| `split` | 拆分并等待 active/empty response |
+| `merge` | load non-active byte merge |
+| `wb` | 正常 ROB writeback |
+| `excp` | 等待异常 ROB writeback |
+
+存储优化:
+
+- 宽 payload 使用无 reset 的 `Reg(Vec(...))`。
+- `entryValid` 独立 `RegInit(false)`。
+- reset 和 redirect 只清 `valid`，不清整个 entry。
+- 所有 Split/Merge 候选都先检查 `valid`，无效 payload 不参与行为。
+
+更新顺序为 bitmap update、state update、enqueue、flush；flush 最后覆盖 `valid`。
+
+同拍多 response:
+
+- `setReqSent/clearReqSent/setReqAck` 分别按 mask OR 合并。
+- 多路 exception 命中同一 entry 时选择最小 `faultElemIdx`。
+- fault offset 相同时，`PriorityMux` 按 response lane 顺序确定结果。
+
+当前风险:
+
+- 两个 addr lane 命中同一 entry、任意两个 data lane 命中同一 entry会触发 `XSError`。
+- 空 entry 同拍收到 addr+data 时调用 `enterSplit`，但该 helper 当前没有置 `valid := true`。
+
+### 4.2 `MaskGen`
+
+每个地址输入 lane 对应一个组合 `MaskGen`，地址 uop fire 时将结果写入 entry。
+
+对 byte `i`:
+
+```text
+prestart = i < uvstartByte
+tail     = !prestart && i >= uvlByte
+masked   = !vm && !v0[element(i)]
+active   = !prestart && !tail && !masked
+```
+
+- `elemActiveMask` 标记真实访存 byte。
+- `elemAgnosticMask` 只标记 `vma` 生效的 masked-off byte 和 `vta` 生效的 tail byte。
+- prestart byte 始终不 agnostic，merge 时保留旧 `vd`。
+- mask 在 entry 入队时一次生成，Split/Merge 不再读取 `vm/v0`。
+
+### 4.3 `AddrGen`
+
+每条 active lane 各有一个组合 AddrGen。
+
+```text
+elemIdx = byteOffset >> deew
+elemOrd = (uopIdx << elemNum(deew)) | elemIdx
+```
+
+其中 `elemNum(deew)` 返回每个 128-bit slice 所含元素数量的 log2: 4/3/2/1。
+
+Stride:
+
+```text
+offset = signed(op2Data[XLEN-1:0]) * signed(elemOrd)
+vaddr  = baseAddr + offset
+```
+
+Indexed:
+
+- 按 `ieew` 从 `op2Data` 选择 8/16/32/64-bit index。
+- 8/16/32-bit index zero-extend 到 XLEN；64-bit 原样使用。
+- `vaddr = baseAddr + indexOffset`。
 
 ### 4.4 `SplitCtrl`
 
-定义位置: `SplitCtrl.scala`
+候选 mask:
 
-| 信号 | 方向 | 类型 | 说明 |
-|---|---|---|---|
-| `in` | input | `Vec(numEntries, CtrlInput)` | 从 EntryTable 观察所有 entry |
-| `redirect` | input valid | `Flipped(Valid[Redirect])` | 过滤被冲刷 entry |
-| `lsuReq` | output decoupled vec | `Vec(ActiveIssueWidth, Decoupled[VAGQLsuReq])` | active 请求输出，当前两路 |
-| `lsqEmptyReq` | output decoupled | `Decoupled[VAGQLsqEmptyReq]` | inactive/prestart/tail 空请求输出 |
-| `vrfReadReq` | output decoupled | `Decoupled[VAGQVRFReadReq]` | store active 请求缺少 store data 时，读 `psrc2` |
-| `vrfReadResp` | input valid | `Flipped(Valid[VAGQVRFReadResp])` | store data 读返回 |
-| `update` | output valid vec | `Vec(SplitUpdateWidth, Valid[VAGQReqBitmapUpdate])` | 请求 fire 后回写 EntryTable，置位 `reqSent` |
+```text
+canSplit     = valid && state == split && !needFlush
+activePending = canSplit && !orderedBlocked ? (~reqSent & elemActiveMask) : 0
+emptyPending  = canSplit ? (~reqSent & ~reqAck & ~elemActiveMask) : 0
+```
 
-选择逻辑:
+entry 选择:
 
-- `canSplit = entry.valid && state == split && !needFlush`
-- `orderedBlocked = entry.isOrdered && (reqSent & ~reqAck & elemActiveMask).orR`
-- `activePending = ~reqSent & elemActiveMask`，但 ordered blocked 时强制为 0
-- `emptyPending = ~reqSent & ~reqAck & ~elemActiveMask`
-- active 请求和 empty 请求使用独立选择路径，分别从 `activePending` 和 `emptyPending` 中选 entry。
-- active entry 和 empty entry 都使用 `oldestEntryOH` 选择最老 entry，比较顺序为 `robIdx`，同 ROB 内比较 `uopIdx`，再用 entry index 打破平局。
-- active lane0 选择当前 active mask 的最低位元素；active lane1 从 lane0 剩余 active mask 中选择最高位元素。
-- empty 请求一次发送所选 entry 当前所有 `emptyPending` byte，并通过 `entryMask` 转换成 LSQ entry 标记。
+- active 和 empty 各自独立选择 entry，可以同拍来自不同 entry。
+- `oldestEntryOH` 先比较 `robIdx`，同 ROB 比较 `uopIdx`，最后以低 entry index 打破平局。
 
-store data 逻辑:
+active 选择:
 
-- store active 请求需要 `selectedStoreDataReady` 才能发 `lsuReq`。
-- 若选中 store active 请求且 store data 不 ready，`SplitCtrl` 通过 `vrfReadReq` 读取 `entry.psrc2`。
-- `vrfReadResp` 匹配 `entryIdx + robIdx` 且 entry 仍 alive 时，数据进入 `storeData` 寄存器。
-- 后续同一 entry/robIdx 的 store active 请求用 `storeData` 填 `lsuReq.bits.data`。
-- 当前只有一个 pending store-data read 和一个 cached store-data slot。
+- lane0 选择最低 set bit 所在元素。
+- lane1 从去掉 lane0 元素后的 mask 中选择最高 set bit 所在元素。
+- offset 先按 `deew` 对齐到元素起始 byte，issue mask 覆盖整个元素。
+- ordered indexed 在已有 active request 未 ACK 时阻止继续发射，同时禁止 lane1。
+- 当前两路 active 来自同一个 selected entry。
 
-输出行为:
+empty 选择:
 
-- `lsuReq(0).valid = hasActiveReq && activeReqDataReady`
-- `lsuReq(1).valid = hasActiveReq && activeHasTwoReq && activeReqDataReady`
-- `lsqEmptyReq.valid = hasEmptyReq`
-- `update(0)` 汇总两路 active lane 的 fire mask，置位 active byte 的 `reqSent`
-- `update(1)` 在 `lsqEmptyReq.fire` 时置位 empty byte 的 `reqSent`
-- `lsuReq/lsqEmptyReq` 都携带 `lqIdx/sqIdx`，来自 `entry.meta`
+- 一拍最多发送一个 entry 的 empty request。
+- 一个 empty request 可以包含该 entry 全部 pending non-active byte。
+- `byteMaskToEntryMask` 按 EEW 将 16-bit byte mask 压缩为 16/8/4/2 个 LSQ element bit。
 
-当前限制:
+bitmap update:
 
-- 当前 active 路径固定写成两路 `activeAddrGen(0/1)`，若未来修改 `ActiveIssueWidth`，需要同步泛化 `SplitCtrl`。
-- 当前 empty 路径只有一路 `lsqEmptyReq`，但一次 request 可以覆盖所选 entry 的多个 non-active byte/entry。
+- 任一 active lane fire 时，`update(0)` OR 两路 issue mask 并设置 `reqSent`。
+- empty request fire 时，`update(1)` 设置整个 `emptyMask` 的 `reqSent`。
+
+当前 `VAGQLsuReq.data` 固定为 0，因此 active store data 尚未实现。
 
 ### 4.5 `MergeCtrl`
 
-定义位置: `MergeCtrl.scala`
+response 接受:
 
-| 信号 | 方向 | 类型 | 说明 |
-|---|---|---|---|
-| `entry` | input | `Vec(numEntries, CtrlInput)` | 从 EntryTable 观察所有 entry |
-| `lduResp` | input valid vec | `Flipped(Vec(LduRespWidth, Valid[VAGQResp]))` | active load 请求 response |
-| `staResp` | input valid vec | `Flipped(Vec(StaRespWidth, Valid[VAGQResp]))` | active store 请求 response |
-| `lsqEmptyResp` | input valid | `Flipped(Valid[VAGQResp])` | 空请求 response，VAGQ 顶层已从 `VAGQLsqEmptyResp` 转换到该格式 |
-| `reqUpdate` | output valid vec | `Vec(MergeRespWidth, Valid[VAGQReqBitmapUpdate])` | response 转换成 bitmap/异常更新 |
-| `stateUpdate` | output valid | `Valid[VAGQEntryStateUpdate]` | split done、merge done、写回后的状态推进 |
-| `vrfReadReq` | output decoupled | `Decoupled[VAGQVRFReadReq]` | merge 阶段读旧 `vd` |
-| `vrfReadResp` | input valid | `Flipped(Valid[VAGQVRFReadResp])` | 旧 `vd` 返回 |
-| `vrfWriteReq` | output valid | `ValidIO[VAGQVRFWriteReq]` | merge 阶段写回非 active byte；当前无 ready |
-| `robWriteback` | output decoupled | `Decoupled[VAGQWritebackReq]` | 正常完成或异常完成写回 |
-| `redirect` | input valid | `Flipped(Valid[Redirect])` | 过滤被冲刷 entry 和 pending merge response |
+```text
+accepted = resp.valid && entryIdx in range &&
+           entries(entryIdx).valid && entries(entryIdx).robIdx == resp.robIdx
+```
 
-response 接受条件:
+response 映射:
 
-- response lane valid
-- `entryIdx` 命中一个 entry
-- entry valid
-- response `robIdx` 等于该 entry 当前 `robIdx`
-
-response 到 bitmap update 的映射:
-
-| response 类型 | `setReqAck` | `clearReqSent` | 状态影响 |
-|---|---|---|---|
-| 正常 ACK | `resp.mask` | 0 | byte lane 完成 |
-| NACK 且无异常 | 0 | `resp.mask` | 允许之后重发 |
-| exception | `resp.mask` | 0 | 记录异常号和 `faultElemIdx`，entry 进入 `excp` |
-
-状态推进优先级:
-
-| 优先级 | 条件 | 行为 |
-|---:|---|---|
-| 1 | split entry 的 `reqAck.andR` 且本拍没有该 entry exception hit | store 或可跳过 merge 时进入 `wb`，否则进入 `merge` |
-| 2 | VRF merge write valid | entry 进入 `wb` |
-| 3 | writeback fire | `clearValid := true`，释放 entry |
-
-merge 行为:
-
-- `merge` 状态 entry 会通过 `vrfReadReq` 读取 `psrc2` 指向的旧 `vd`。
-- VRF response 必须匹配 `entryIdx` 和 `robIdx`，并且 entry 仍处于 live merge 状态。
-- `skipMerge = !splitDoneNonActiveMask.orR`，也就是没有任何非 active byte 需要 merge 时，split done 后直接进 `wb`。
-- `nonActiveMask = ~elemActiveMask`。
-- `mergeWriteData = oldVd`，但 `elemAgnosticMask & nonActiveMask` 覆盖的 byte 写成全 1。
-- `vrfWriteReq.mask = nonActiveMask`，即只写非 active byte。
-- 当前 `MergeCtrl` 没有把 `VAGQResp.data` 收集进 entry，因此 active load data 合并路径还不完整。
-
-异常更新:
-
-- `MergeCtrl` 将 `lduResp ++ staResp ++ lsqEmptyResp` 转成 `reqUpdate`，总共 `MergeRespWidth=6` 路。
-- `EntryTable` 对 bitmap 字段做 OR 合并，但 `exceptionNumber/faultElemIdx` 只能写一份；当前用 `PriorityMux` 按 update lane 顺序选择一个异常更新。
-- 这个优先级选择保证同拍多路异常命中同一 entry 时写入确定，但不等价于自动选择最小 `faultElemIdx`。
-
-异常写回行为:
-
-- `excp` entry 只有在 `faultElemIdx` 之前的 older in-flight byte 都不再 pending 后才允许写回。
-- `robWriteback.exception = true` 时携带 `exceptionNumber`、`faultElemIdx`、`faultVstart`。
-- `faultVstart = (uopIdx << elemNum(deew)) + (faultElemIdx >> deew)`。
-
----
-
-## 5. 握手约定
-
-### 5.1 Decoupled
-
-`Decoupled` 信号只有 `valid && ready` 同时为真才 fire。
-
-| 接口 | 方向 | fire 后含义 |
-|---|---|---|
-| `addrUop` | VAGQ input | 地址侧字段写入 entry |
-| `dataUop` | VAGQ input | 数据侧字段写入 entry |
-| `lsuReq` | VAGQ output | active 请求发出，EntryTable 置位 `reqSent` |
-| `lsqEmptyReq` | VAGQ output | empty 请求发出，EntryTable 置位 `reqSent` |
-| `vrfReadReq` | VAGQ output | store-data read 或 load merge read 请求被接受 |
-| `robWriteback` | VAGQ output | 写回被接受，entry 释放 |
-
-### 5.2 Valid
-
-`Valid` 信号没有 ready，接收端必须在 valid 当拍采样或自行过滤。
-
-| 接口 | 说明 |
+| response | 更新 |
 |---|---|
-| `lduResp` | active load 请求 response，MergeCtrl 用 `entryIdx + robIdx` 过滤 |
-| `staResp` | active store 请求 response，MergeCtrl 用 `entryIdx + robIdx` 过滤 |
-| `lsqEmptyResp` | empty 请求 response，MergeCtrl 用 `entryIdx + robIdx` 过滤 |
-| `vrfReadResp` | VRF read response，SplitCtrl/MergeCtrl 分别用 pending read entry 和 `robIdx` 过滤 |
-| `vrfWriteReq` | merge 写回请求，当前是 `ValidIO`，没有 ready 反压；`MergeCtrl` 在 valid 当拍推进 entry 到 `wb` |
-| `redirect` | redirect/flush 广播，EntryTable/SplitCtrl/MergeCtrl 都会过滤 |
-| `splitUpdate` | SplitCtrl 到 EntryTable 的 bitmap 更新 |
-| `mergeReqUpdate` | MergeCtrl 到 EntryTable 的 response bitmap 更新 |
-| `mergeStateUpdate` | MergeCtrl 到 EntryTable 的状态更新 |
-| `reqUpdate` | MergeCtrl 内部输出给 EntryTable |
-| `stateUpdate` | MergeCtrl 内部输出给 EntryTable |
+| ACK | `setReqAck |= mask` |
+| NACK 且无异常 | `clearReqSent |= mask` |
+| exception | `setReqAck |= mask`，记录异常，状态进入 `excp` |
 
-### 5.3 `entryIdx + robIdx` 匹配
+候选和推进:
 
-VAGQ entry 可能被释放后重新分配，因此 response 不能只依赖 `entryIdx`。
+- `splitDone`: `state==split && reqAck.andR`，并排除同拍异常命中的 entry。
+- store 或 active mask 全 1 的 load 从 split 直接进入 `wb`。
+- 其他 load 进入 `merge`。
+- merge/wb/excp/splitDone 各自通过 `PriorityEncoder` 选择，低 entry index 优先，不是 oldest 选择。
+- 状态更新优先级: splitDone > VRF merge write > ROB writeback fire。
 
-当前 `MergeCtrl` 接受 response 的条件中同时检查:
+load merge:
 
-- `entryIdx` 命中合法 entry
-- entry 当前 `valid`
-- entry 当前 `robIdx == resp.robIdx`
+1. `merge` entry 产生 `VAGQVRFReadReq(psrc2)`。
+2. VecRegion 一拍后带 `entryIdx+robIdx` 返回旧 `vd`。
+3. `MergeCtrl` 缓存 response data。
+4. `nonActiveMask = ~elemActiveMask`。
+5. agnostic non-active byte 写全 1，其余 non-active byte写旧 `vd`。
+6. 专用 VRF 写口只使能 `nonActiveMask`，不会覆盖 LDU 已写 active byte。
 
-`SplitCtrl` 和 `MergeCtrl` 的 VRF read response 路径也保存 pending `entryIdx + robIdx`，用来防止旧响应污染新 entry。
+异常:
 
-### 5.4 `reqSent / reqAck` byte 状态
+- `faultElemIdx` 保存 response 的 `byteOffset`。
+- `faultVstart = (uopIdx << elemNum(deew)) + (faultElemIdx >> deew)`。
+- exception entry 只有在 fault 之前已发送但未 ACK 的 byte 清空后才允许 ROB writeback。
 
-每个 byte lane 的请求状态由两个 bit 表示。
+当前风险:
 
-| 状态 | `reqSent` | `reqAck` | 含义 |
-|---|---:|---:|---|
-| IDLE | 0 | 0 | 未发请求 |
-| SENT | 1 | 0 | 已发请求，等待 ACK/NACK/exception |
-| DONE | X | 1 | 已完成 |
-
-状态转移:
-
-- `SplitCtrl` 发出请求后置位 `reqSent`。
-- 正常 ACK 置位 `reqAck`。
-- NACK 清除 `reqSent`，允许后续重发。
-- exception 记录异常信息，并使 entry 进入 `excp`。
-
-### 5.5 LSQ empty mark 语义
-
-`lsqEmptyReq` 只用于 non-active byte，包括 prestart、mask-off inactive 和 tail。active byte 必须走 `lsuReq`，不应该走 empty mark。
-
-`emptyMask` 和 `entryMask` 的职责不同:
-
-| 字段 | 粒度 | 用途 |
-|---|---|---|
-| `emptyMask` | VAGQ byte 级 | response 返回给 VAGQ 后更新 `reqSent/reqAck` |
-| `entryMask` | LSQ entry/元素级 | LSQ 标记 `lqIdx/sqIdx + i` 对应的预留项 |
-
-LSQWrapper 会根据 `isLoad/isStore` 分发:
-
-- load empty mark 进入 LoadQueue，成功后置对应 LQ entry 的 `committed`。
-- store empty mark 进入 StoreQueue，成功后置对应 SQ entry 的 `vecInactive`。
-- LQ/SQ 都会检查目标项真的 match；如果索引错误、entry 已释放、`robIdx` 或 base `lqIdx/sqIdx` 不匹配、或被 flush/cancel，则 `emptyMarkSuccess=false`。
-- `LSQWrapper` 用 `isNACK := !emptyMarkSuccess` 返回 VAGQ。VAGQ 收到 NACK 后清除对应 `reqSent`，允许后续重试。
-- 当前 `MemBlock.scala` 已通过 `VAGQDownstreamAdapter` 将 `vagq.io.lsqEmptyReq` 接到 `lsq.io.lsqEmptyReq`，并把 `lsq.io.lsqEmptyResp` 返回 VAGQ。
+- `mergeRespValid` 的清除条件当前写成 `!mergeRespValid || vrfWriteValid`。pending merge 被 redirect 杀死后 `vrfWriteValid=0`，该 valid 可能永久保持，阻塞新 merge。
 
 ---
 
-## 6. 操作类型编码
+## 5. 上游接入
 
-定义位置: `EntryTable.scala`
+### 5.1 地址侧
 
-| 类型 | 编码 | 含义 |
-|---|---|---|
-| `strideLoad` | `000` | constant-stride load |
-| `strideStore` | `001` | constant-stride store |
-| `indexedUnorderedLoad` | `100` | unordered indexed load |
-| `indexedUnorderedStore` | `101` | unordered indexed store |
-| `indexedOrderedLoad` | `110` | ordered indexed load |
-| `indexedOrderedStore` | `111` | ordered indexed store |
+路径:
 
-辅助判断:
+```text
+StaIQ -> bypass/data path -> Region.toMem register -> buildVagqAddrUop -> Backend -> MemBlock -> VAGQ
+```
 
-- `isLoad = !uopType(0)`
-- `isStore = uopType(0)`
-- `isStride = !uopType(2) && !uopType(1)`
-- `isIndexed = uopType(2)`
-- `isOrdered = uopType(1)`
+- 仅 `isVagqAddrUop` 的 strided/indexed vector load/store 被截获。
+- 被截获 uop 不再送普通 MemBlock issue input。
+- VAGQ ready 时 fire，Region 生成 delayed S2 `finalSuccess` 释放 StaIQ entry。
+- VAGQ 不 ready 时 S0 response 失败，IQ 保留并重试。
+- 两个 StaIQ 分别对应 `addrUop(0/1)`，不做跨 lane 仲裁。
 
----
+### 5.2 Stride 数据侧
 
-## 7. 当前系统级接入状态
+路径:
 
-### 7.1 `VAGQDownstreamAdapter`
+```text
+StdIQ -> MemBlock issueStd[i] -> buildVagqStrideDataUop -> VAGQ.dataUop[i]
+```
 
-定义位置: `mem/vector/VAGQDownstreamAdapter.scala`
+- stride data uop 使用整数源 `src(0)` 作为 `op2Data`。
+- 它绕过普通 `StdExeUnit.io.in`。
+- `stdIssue.ready` 直接由对应 VAGQ data lane ready 控制。
 
-| 信号 | 方向 | 类型 | 说明 |
-|---|---|---|---|
-| `vagqLsuReq` | input decoupled vec | `Flipped(Vec(ActiveIssueWidth, Decoupled[VAGQLsuReq]))` | 来自 VAGQ 的 active req，目前只处理其中的 load req |
-| `vagqLduResp` | output valid vec | `Vec(LduRespWidth, Valid[VAGQResp])` | 返回 VAGQ 的 LDU response，当前直接透传 `lduResp` |
-| `vagqStaResp` | output valid vec | `Vec(StaRespWidth, Valid[VAGQResp])` | 返回 VAGQ 的 STA response，当前全部置 invalid |
-| `issueLda` | input decoupled mixed vec | `Flipped(MixedVec(loadParams.map(Decoupled[ExuInput])))` | 普通 LduIQ 发往 LDU 的请求 |
-| `lduReq` | output decoupled mixed vec | `MixedVec(loadParams.map(Decoupled[ExuInput]))` | 仲裁后送入 `NewLoadUnit.io.ldin` 的请求 |
-| `lduReqMeta` | output | `Vec(loadParams.length, VAGQMemPipelineMeta)` | 送入 LoadUnit 的 VAGQ metadata；普通 load 为 0 |
-| `lduResp` | input valid vec | `Flipped(Vec(LduRespWidth, Valid[VAGQResp]))` | 来自各 LoadUnit 的 VAGQ response |
-| `vagqLsqEmptyReq` | input decoupled | `Flipped(Decoupled[VAGQLsqEmptyReq])` | 来自 VAGQ 的 LSQ-empty req |
-| `vagqLsqEmptyResp` | output valid | `Valid[VAGQLsqEmptyResp]` | 返回 VAGQ 的 LSQ-empty resp |
-| `lsqEmptyReq` | output decoupled | `Decoupled[VAGQLsqEmptyReq]` | 发给 `LSQWrapper` 的 LSQ-empty req |
-| `lsqEmptyResp` | input valid | `Flipped(Valid[VAGQLsqEmptyResp])` | 来自 `LSQWrapper` 的 LSQ-empty resp |
+### 5.3 Indexed 数据侧
 
-当前 adapter 行为:
+路径:
 
-- 对 lane0/lane1，`activeReq.valid && activeReq.bits.isLoad` 才参与 load 仲裁。
-- `selectActive = activeLoadValid && (!issueLda(i).valid || isAfter(issueLda(i).bits.robIdx, activeReq.bits.robIdx))`。
-- 也就是说 VAGQ active load req0 只和普通 `issueLda0` 仲裁，VAGQ active load req1 只和普通 `issueLda1` 仲裁。
-- `issueLda2` 不参与 VAGQ 仲裁，直接透传到 `LoadUnit2`。
-- 被选中的 VAGQ load 被转成 `FuType.vldu` 的 `ExuInput`，`src(0)=vaddr`，`fuOpType` 由 `alignedType` 映射成 `vle8/vle16/vle32/vle64`，并填入 `robIdx/pdest/lqIdx/sqIdx/vecWen`。
-- `lduReqMeta` 同拍携带 `entryIdx/robIdx/isLoad/byteOffset/mask`，LoadUnit 后续用它生成 `VAGQResp`。
-- store active req 当前没有转成 STA input，因此 VAGQ store req 会因为没有对应 ready/resp 而无法端到端完成。
-- LSQ-empty req/resp 当前只做透传，真正 match/ACK/NACK 由 `LSQWrapper`、LoadQueue、StoreQueue 完成。
+```text
+Sta dispatch copy -> VStdIQ -> IssuePipe OG0/OG1 read vs2 -> OG2 -> VecRegion -> Backend -> MemBlock -> VAGQ.dataUop[2:3]
+```
 
-### 7.2 `VAGQMemPipelineMeta`
+- Region 将 indexed data uop 的 VStd 源改为 `vs2`。
+- IssuePipe 在 IS2/OG2 识别 indexed VAGQ data uop，构造 `VAGQDataSideUop` 并禁止其进入普通 VStd EX0。
+- VecRegion 输出类型是 `Decoupled`，但当前 IssuePipe 没有 ready 回传，只用 `XSError(valid && !ready)` 检查，因此依赖上游保证 VAGQ entry 可接受。
 
-定义位置: `mem/pipeline/Bundles.scala`
+### 5.4 当前 tag 缺口
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `valid` | `Bool` | 当前 LoadUnit/StoreUnit pipeline entry 是否来自 VAGQ |
-| `entryIdx` | `UInt(VAGQEntryIdxWidth.W)` | VAGQ entry index |
-| `robIdx` | `RobPtr` | VAGQ request 对应 ROB index |
-| `isLoad` | `Bool` | request 是否为 load |
-| `isStore` | `Bool` | request 是否为 store |
-| `byteOffset` | `UInt(FlowByteWidth.W)` | active 元素在 16B flow 内的 byte offset |
-| `mask` | `UInt(FlowBytes.W)` | active 元素覆盖的 byte mask |
+设计要求 VOQ 为地址侧和数据侧分配相同且独占的 `entryIdx`。当前代码尚未实现该分配和传播，三个 `buildVagq*Uop` helper 都固定写 entry 0。这会导致:
 
-### 7.3 MemBlock 当前连线
-
-定义位置: `mem/MemBlock.scala`
-
-- `MemBlock` 当前例化 `val vagq = Module(new VAGQ)` 和 `val vagqDownstream = Module(new VAGQDownstreamAdapter(ldaParams))`。
-- `vagq.io.addrUop.valid := false.B`，`vagq.io.dataUop.valid := false.B`，所以上游尚未向 VAGQ 注入真实 uop。
-- `vagq.io.vrfReadReq.ready := false.B`，`vagq.io.vrfReadResp.valid := false.B`，所以 VAGQ store-data read 和 load merge old-vd read 尚未接入系统 VRF。
-- `vagq.io.robWriteback.ready := false.B`，所以 VAGQ 完成/异常写回尚未接入 ROB/release。
-- `vagqDownstream.io.vagqLsuReq <> vagq.io.lsuReq`，active req 进入 downstream adapter。
-- `vagq.io.lduResp := vagqDownstream.io.vagqLduResp`，LDU response 返回 VAGQ。
-- `vagq.io.staResp := vagqDownstream.io.vagqStaResp`，但 adapter 当前把 STA response 全部置 invalid。
-- `vagqDownstream.io.vagqLsqEmptyReq <> vagq.io.lsqEmptyReq`，LSQ-empty req 进入 downstream adapter。
-- `lsq.io.lsqEmptyReq <> vagqDownstream.io.lsqEmptyReq`，LSQ-empty path 已接到 LSQWrapper。
-- `vagqDownstream.io.lsqEmptyResp := lsq.io.lsqEmptyResp`，LSQ-empty ACK/NACK 已返回 VAGQ。
-
-### 7.4 LoadUnit 当前 VAGQ 行为
-
-定义位置: `mem/pipeline/NewLoadUnit.scala`
-
-- LoadUnit S0 将 `io.vagqReqMeta` 写入 pipeline bundle 的 `vagq` 字段。
-- `isVAGQ = in.vagq.valid` 时，普通 vector load ROB writeback 被禁止，完成信息通过 `VAGQResp` 返回 VAGQ。
-- VAGQ load 出现 replay/fast replay/RAR/matchInvalid 时不会走普通 LoadQueueReplay，而是返回 `isNACK=true`，由 VAGQ 清除 `reqSent` 后重发。
-- VAGQ load 成功时会通过现有普通 vector load VRF 写口写 active 数据；数据会左移 `byteOffset * 8` 对齐到 16B flow 内位置。
-- `VAGQResp.data` 当前也填入对齐后的 load data，但 VAGQ core 的 `MergeCtrl` 不收集 active load data。
-- VAGQ load 成功且无异常时会让 LQ 更新地址有效；异常时 `exceptionNumber` 来自 `ExceptionNO.priorities`。
-
-### 7.5 StoreUnit 当前 VAGQ 行为
-
-定义位置: `mem/pipeline/NewStoreUnit.scala`
-
-- StoreUnit pipeline 已有 `vagqReqMeta` 输入和 `vagqResp` 输出。
-- S3 能根据 `in.vagq.valid` 生成 VAGQ store response，NACK 条件包括 TLB miss 或 RS replay，异常号来自 store-side exception vector。
-- 当前 `MemBlock` 仍将 `stu.io.vagqReqMeta := 0.U.asTypeOf(stu.io.vagqReqMeta)`，`VAGQDownstreamAdapter` 也没有输出 STA request，所以这段 StoreUnit VAGQ 支持尚未端到端启用。
+- 多条指令无法并行使用 8 个 entry。
+- 同拍多 lane 可能命中同一 entry 并触发断言。
+- 地址侧与数据侧可能按错误的 entry 配对。
 
 ---
 
-## 8. 当前实现注意点
+## 6. `VAGQDownstreamAdapter`
 
-- `VAGQDataSideUop` 携带 `op2Data` 和 `psrc2`，其中 `op2Data` 是 stride/index 地址生成使用的第二操作数数据。
-- store data 当前由 `SplitCtrl` 通过 VAGQ 顶层 `vrfReadReq/vrfReadResp` 读取 `psrc2` 得到。
-- `VAGQLsuReq` 当前没有携带完整 `DynInst`；当前 load adapter 只重建了 LDU 所需的最小 `ExuInput` 字段，STA/debug/trigger/完整异常上下文仍可能需要继续补齐。
-- `VAGQResp.data` 当前定义存在，但核心 `MergeCtrl` 没有把 active load data 收集进 entry；当前 merge 只处理非 active byte 的旧 `vd` / agnostic 写回。
-- `nf` 当前只在地址侧 uop、entry、`VAGQLsuReq` 中透传，没有驱动 segment 维度的额外拆分。
-- `SplitCtrl` 当前 active 路径是两路固定实现，empty 路径是一条 `lsqEmptyReq`，不是完全参数化的任意 lane split issue。
-- `faultElemIdx` 命名上像元素序号，但当前存的是 16B flow 内 byte offset；`faultVstart` 才是元素级架构序号。
-- `vrfWriteReq` 是 `ValidIO`，没有 ready 反压；系统级 VRF 写口接入时需要确认不会丢请求或需要另加 buffer/ready 协议。
-- `EntryTable` 多路异常同拍命中时按 update lane 优先级选择异常，不保证选择最小 `faultElemIdx`。
-- 当前 VAGQ 在 MemBlock 中已实例化，但上游、VRF、ROB 都 tie-off，因此还不是完整可执行的端到端通路。
+### 6.1 IO
+
+| 信号 | 说明 |
+|---|---|
+| `vagqLsuReq[2]` | VAGQ active request |
+| `vagqLduResp[3]`, `vagqStaResp[2]` | 返回 VAGQ 的 response |
+| `issueLda[]`, `lduReq[]`, `lduReqMeta[]` | 普通 LDA 输入、仲裁后 LDU 输入、VAGQ metadata |
+| `issueSta[]`, `staReq[]`, `staReqMeta[]` | 普通 STA 输入、仲裁后 STA 输入、VAGQ metadata |
+| `stdDataBusy[2]`, `vagqStdData[2]` | 普通 vector store data 占用与 active store data 输出 |
+| `vagqLsqEmptyReq/Resp` | VAGQ 侧 empty path |
+| `lsqEmptyReq/Resp` | LSQWrapper 侧 empty path |
+
+### 6.2 Load 仲裁
+
+对 `i=0,1`:
+
+```text
+selectActive = vagqReq(i).valid && isLoad && !issueLda(i).valid
+```
+
+- 普通 `issueLda(i)` 始终优先。
+- active lane i 只能使用 LoadUnit i。
+- LoadUnit2 只接普通 `issueLda2`。
+- 没有 robIdx 比较，也没有从所有请求中选择全局最老 3 个。
+
+选中 active load 后，adapter 构造最小 `ExuInput`:
+
+- `fuType=vldu`
+- `fuOpType=vle8/vle16/vle32/vle64`
+- `src(0)=vaddr`
+- 设置 `robIdx/pdest/lqIdx/sqIdx/vecWen`
+- 同拍提供 `VAGQMemPipelineMeta`
+
+### 6.3 Store 仲裁
+
+对 `i=0,1`:
+
+```text
+selectActive = vagqReq(i).valid && isStore && !issueSta(i).valid
+canFire      = selectActive && !stdDataBusy(i) && staReq(i).ready
+```
+
+- 普通 `issueSta(i)` 始终优先。
+- active lane i 只能使用 StoreUnit i 和对应 STD data lane i。
+- active STA request 与 `vagqStdData` 同拍产生，保证地址和数据一起被接收。
+- `stdDataBusy` 当前由普通 `vstdStoreData(i).valid` 驱动。
+- `vagqStdData` 进入 `StdExeUnit.vstdIn`，再写 StoreQueue data。
+- 当前 `vagqStdData.data` 来自 `VAGQLsuReq.data`，而该字段固定为 0。
+
+### 6.4 Response 与 empty path
+
+- 3 路 LDU 和 2 路 STA response 直接透传，无压缩和 response buffer。
+- 每路是 `Valid`，不能反压。
+- LSQ empty req/resp 只做 Decoupled/Valid 透传。
+
+---
+
+## 7. LDU/STA 行为
+
+### 7.1 Active load
+
+- S0 将 `vagqReqMeta` 写入 load pipeline bundle。
+- VAGQ load 不走普通 vector load ROB writeback。
+- replay、RAR、forward match invalid 等条件形成 `isNACK`，由 VAGQ 清 `reqSent` 后重发，不进入普通 LQ replay 流程。
+- 成功时 LDU 将 load data 左移 `byteOffset*8` 对齐到 flow，并通过普通 vector load RF 写口写回。
+- Backend 使用 `vagqActiveLoadMask` 替换全写 mask，只写当前 active 元素 byte。
+- 成功 load 同时更新 LQ address valid。
+- LDU 生成带 `entryIdx/robIdx/mask/exception` 的 `VAGQResp`。
+- assertion 禁止 VAGQ active load 进入 unaligned split/concat 路径。
+
+### 7.2 Active store
+
+- S0 将 `vagqReqMeta` 写入 store pipeline bundle。
+- STA 完成时生成 `VAGQResp`。
+- TLB miss 或 RS replay 且无异常时返回 NACK。
+- store exception vector 转换为 `exceptionNumber`。
+- assertion 禁止 VAGQ active store 进入 unaligned split/concat 路径。
+- store data 不经过 STA 本身，由对应 `StdExeUnit.vstdIn` 写入 SQ data。
+
+---
+
+## 8. LSQ empty mark
+
+流程:
+
+```text
+SplitCtrl -> registered lsqEmptyReq -> Adapter -> LSQWrapper
+                                              +-> LoadQueue.emptyMark
+                                              +-> StoreQueue.emptyMark
+LSQWrapper -> lsqEmptyResp -> Adapter -> MergeCtrl
+```
+
+LSQWrapper 要求 `isLoad` 和 `isStore` 恰好一个为真。
+
+LoadQueue/SQ 对 `entryMask(i)=1` 的目标项检查:
+
+- target entry 已分配并且是 vector entry
+- target `robIdx` 匹配
+- 记录的 `lqBaseIdx/sqBaseIdx` 与 request base pointer 匹配
+- 当前没有 redirect/cancel/dequeue 冲突
+
+全部目标命中才 `emptyMarkSuccess=true`。LSQWrapper 在 request fire 同拍产生 response:
+
+- success: `isNACK=0`
+- failure: `isNACK=1`，VAGQ 清 `emptyMask` 对应的 `reqSent` 后重试
+- empty mark 不产生架构异常
+
+LoadQueue 成功后将目标项标记 committed；StoreQueue 成功后将目标项标记 `vecInactive`。
+
+---
+
+## 9. VRF 与 ROB
+
+### 9.1 Active load VRF write
+
+active load 不使用 VAGQ 专用 merge 写口，而是复用 LDU 原有 vector load writeback。Backend 将 `VAGQResp.mask` 作为 `Exu.ToRf.mask`，VecRegion 对每个 byte 生成 write enable。
+
+### 9.2 Non-active merge VRF port
+
+VecRegion 在普通 VRF 端口之外增加:
+
+- 1 个 VAGQ read port: request 当拍给 `vpRaddr`，下一拍返回 data 和寄存的 `entryIdx/robIdx`
+- 1 个 VAGQ masked write port: `valid && mask(byteIdx)` 直接形成每 byte write enable
+
+接口没有 ready，因此当前实现假设专用端口每拍都能接受。
+
+### 9.3 ROB writeback
+
+路径:
+
+```text
+MergeCtrl.robWriteback
+  -> MemBlock VAGQWritebackConnect.toRob
+  -> Backend.mem.vagqRobWriteback
+  -> CtrlBlock delayedNotFlushedVagqWriteBack
+  -> ROB.vagqWriteback / ExceptionGen
+```
+
+- `BackendParams.vagqWritebackParam` 是 fake ExeUnit param，用于生成独立 `WriteBackRobBundle`。
+- bundle 包含可选 `entryIdx`，普通非 VAGQ 写口不依赖它。
+- `CtrlBlock` 对该端口做一拍寄存和 older redirect flush 过滤。
+- ROB 将 VAGQ writeback 计入 writeback 数，并把异常送 ExceptionGen。
+- `MemBlock` 将 `vagq.io.robWriteback.ready` 固定为 true；writeback fire 后 VAGQ entry 被释放。
+
+---
+
+## 10. 协议约束与已知限制
+
+### Decoupled
+
+- `addrUop/dataUop/lsuReq/lsqEmptyReq/robWriteback` 只有 `valid && ready` 才完成传输。
+- active/empty 输出的一项寄存器在下游不 ready 时保持请求。
+- indexed OG2 data path 虽声明为 Decoupled，目前不能真正反压 IssuePipe。
+
+### Valid
+
+- LDU/STA/LSQ response、VRF read/write 都没有 ready。
+- 发送端必须保证接收端每拍能处理全部 lane。
+- `MergeRespWidth=6` 允许 3+2+1 response 同拍全部转成 EntryTable update。
+
+### Response tag
+
+所有 active/empty response 必须同时匹配:
+
+```text
+entryIdx in range && entry.valid && response.robIdx == entry.robIdx
+```
+
+只匹配 `entryIdx` 不足以防止 entry 释放后被新指令复用时的旧 response 污染。
+
+### Bitmap
+
+| 状态 | `reqSent` | `reqAck` |
+|---|---:|---:|
+| IDLE | 0 | 0 |
+| SENT | 1 | 0 |
+| DONE | X | 1 |
+
+- request 进入输出流水时设置 `reqSent`
+- ACK 设置 `reqAck`
+- NACK 清 `reqSent`
+- `reqAck.andR` 表示 16B flow 全部完成
+
+### 当前阻塞项
+
+1. VOQ `entryIdx` 分配/传播未实现，所有入口固定 entry 0。
+2. `psrc2` 固定 0，old-`vd` 读地址不可靠。
+3. active store data 固定 0。
+4. 空 entry 同拍 addr+data 不会置 valid。
+5. redirect 杀死 pending merge response 时可能卡住 `mergeRespValid`。
+6. segment、unaligned、跨页和完整异常顺序尚未验证。
