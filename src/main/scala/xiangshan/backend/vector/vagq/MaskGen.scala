@@ -14,6 +14,12 @@ class MaskGen(implicit p: Parameters) extends VAGQModule {
   private val effectiveVstart = Mux(in.useVstart, in.vstart, zeroVstart)
   private val uvlByte = in.uvlByte
   private val uvstartByte = uopByteRangeLen(effectiveVstart, in.deew, in.uopIdx)
+  private val v0ByteMask = MuxLookup(in.deew, in.v0Mask)(Seq(
+    0.U -> in.v0Mask,
+    1.U -> FillInterleaved(2, in.v0Mask(vagqFlowBytes / 2 - 1, 0)),
+    2.U -> FillInterleaved(4, in.v0Mask(vagqFlowBytes / 4 - 1, 0)),
+    3.U -> FillInterleaved(8, in.v0Mask(vagqFlowBytes / 8 - 1, 0)),
+  ))
 
   private val tailBits     = Wire(Vec(vagqFlowBytes, Bool()))
   private val inactiveBits = Wire(Vec(vagqFlowBytes, Bool()))
@@ -23,7 +29,7 @@ class MaskGen(implicit p: Parameters) extends VAGQModule {
     val byteIdxUInt = byteIdx.U(vagqUvlByteWidth.W)
     val inPrestart = byteIdxUInt < uvstartByte
     val inTail = !inPrestart && byteIdxUInt >= uvlByte
-    val maskActive = in.vm || elemMaskBit(byteIdx, in.deew, in.v0Mask)
+    val maskActive = in.vm || v0ByteMask(byteIdx)
 
     tailBits(byteIdx)     := inTail
     inactiveBits(byteIdx) := !inPrestart && !inTail && !maskActive

@@ -28,15 +28,6 @@ trait HasVAGQHelper extends HasCircularQueuePtrHelper { this: HasVAGQParameters 
     ))
   }
 
-  protected def elemMaskBit(byteIdx: Int, deew: UInt, v0Mask: UInt): Bool = {
-    MuxLookup(deew, v0Mask(byteIdx))(Seq(
-      0.U -> v0Mask(byteIdx),
-      1.U -> v0Mask(byteIdx / 2),
-      2.U -> v0Mask(byteIdx / 4),
-      3.U -> v0Mask(byteIdx / 8),
-    ))
-  }
-
   protected def idxHitSeq(idx: UInt, numEntries: Int): Seq[Bool] = {
     (0 until numEntries).map(i => idx === i.U)
   }
