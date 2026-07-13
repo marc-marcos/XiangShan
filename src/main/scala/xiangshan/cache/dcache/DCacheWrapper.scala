@@ -667,6 +667,7 @@ class DCacheLoadIO(implicit p: Parameters) extends DCacheWordIO
   val s2_hit = Input(Bool()) // hit signal for lsu,
   val s2_first_hit = Input(Bool())
   val s2_bank_conflict = Input(Bool())
+  val s2_rr_bank_conflict = Input(Bool())
   val s2_wpu_pred_fail = Input(Bool())
   val s2_mq_nack = Input(Bool())
 
@@ -1302,6 +1303,7 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
     ldu(i).io.banked_data_resp := bankedDataArray.io.read_resp(i)
 
     ldu(i).io.bank_conflict_slow := bankedDataArray.io.bank_conflict_slow(i)
+    ldu(i).io.rr_bank_conflict_slow := bankedDataArray.io.rr_bank_conflict_slow(i)
   })
 
   io.lsu.forward_D.zipWithIndex.foreach { case (forward, i) =>
