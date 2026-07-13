@@ -67,7 +67,7 @@ class VAGQMeta(implicit p: Parameters) extends VAGQBundle {
   val lqIdx = new LqPtr
   val sqIdx = new SqPtr
   val trigger = TriggerAction()
-  val perfDebugInfo = new PerfDebugInfo
+  val perfDebugInfo = Option.when(backendParams.debugEn)(new PerfDebugInfo)
   val debug_seqNum = InstSeqNum()
 }
 

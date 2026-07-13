@@ -222,7 +222,7 @@ trait HasVAGQHelper extends HasCircularQueuePtrHelper { this: HasVAGQParameters 
     addr.meta.lqIdx := source.lqIdx.getOrElse(0.U.asTypeOf(addr.meta.lqIdx))
     addr.meta.sqIdx := source.sqIdx.getOrElse(0.U.asTypeOf(addr.meta.sqIdx))
     addr.meta.trigger := TriggerAction.None
-    addr.meta.perfDebugInfo := source.perfDebugInfo.getOrElse(0.U.asTypeOf(addr.meta.perfDebugInfo))
+    addr.meta.perfDebugInfo.zip(source.perfDebugInfo).foreach { case (sink, src) => sink := src }
     addr.meta.debug_seqNum := source.debug_seqNum.getOrElse(0.U.asTypeOf(addr.meta.debug_seqNum))
     addr.entryIdx := source.vagqEntryIdx.get
     addr.uopType := Mux(
@@ -280,7 +280,9 @@ object VAGQWritebackConnect {
     sink.debug.isPerfCnt := false.B
     sink.debug.paddr := 0.U
     sink.debug.vaddr := 0.U
-    sink.perfDebugInfo.foreach(_ := source.meta.perfDebugInfo)
+    sink.perfDebugInfo.zip(source.meta.perfDebugInfo).foreach { case (sinkInfo, sourceInfo) =>
+      sinkInfo := sourceInfo
+    }
     sink.debug_seqNum.foreach(_ := source.meta.debug_seqNum)
   }
 }
