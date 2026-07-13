@@ -28,12 +28,15 @@ class VAGQEntryTable(implicit p: Parameters) extends VAGQModule {
     maskGen.in.vta       := addrUop.bits.vta
   }
 
-  private val entryValid = RegInit(VecInit(Seq.fill(vagqSize)(false.B)))
-  private val entryReg   = Reg(Vec(vagqSize, new VAGQEntry))
-  private val entries    = Wire(Vec(vagqSize, new VAGQEntry))
-  entries.zip(entryReg).zip(entryValid).foreach { case ((entry, stored), valid) =>
-    entry := stored
-    entry.valid := valid
+  private val entryValid      = RegInit(VecInit(Seq.fill(vagqSize)(false.B)))
+  private val entryStaticReg  = Reg(Vec(vagqSize, new VAGQEntryStatic))
+  private val entryDynamicReg = Reg(Vec(vagqSize, new VAGQEntryDynamic))
+  private val entries         = Wire(Vec(vagqSize, new VAGQEntry))
+  entries.zip(entryStaticReg).zip(entryDynamicReg).zip(entryValid).foreach {
+    case (((entry, static), dynamic), valid) =>
+      entry.static := static
+      entry.dynamic := dynamic
+      entry.valid := valid
   }
 
   private val addrEntry = io.addrUop.map(addrUop => entryAt(entries, addrUop.bits.entryIdx))
@@ -85,15 +88,18 @@ class VAGQEntryTable(implicit p: Parameters) extends VAGQModule {
     PriorityMux(firstFaultHits.zip(reqBitmapUpdates.map(_.bits)))
   }
 
-  private def applyReqBitmapUpdate(next: VAGQEntry, curr: VAGQEntry, idx: UInt): Unit = {
-    val updateHits = reqBitmapUpdates.map(update => update.valid && update.bits.entryIdx === idx)
+  private def applyReqBitmapUpdate(
+    next: VAGQEntry,
+    curr: VAGQEntry,
+    updateHits: Seq[Bool],
+    hasUpdate: Bool
+  ): Unit = {
     val setReqSent = mergedUpdateMask(updateHits, _.setReqSent)
     val clearReqSent = mergedUpdateMask(updateHits, _.clearReqSent)
     val setReqAck = mergedUpdateMask(updateHits, _.setReqAck)
     val exceptionHits = reqBitmapUpdates.zip(updateHits).map { case (update, hit) =>
       hit && update.bits.exception
     }
-    val hasUpdate = updateHits.reduce(_ || _)
     val hasExceptionUpdate = exceptionHits.reduce(_ || _)
     val exceptionUpdate = selectFirstFaultException(exceptionHits)
 
@@ -108,8 +114,8 @@ class VAGQEntryTable(implicit p: Parameters) extends VAGQModule {
     }
   }
 
-  private def applyMergeStateUpdate(next: VAGQEntry, idx: UInt): Unit = {
-    when(io.mergeStateUpdate.valid && io.mergeStateUpdate.bits.entryIdx === idx) {
+  private def applyMergeStateUpdate(next: VAGQEntry, mergeStateHit: Bool): Unit = {
+    when(mergeStateHit) {
       when(io.mergeStateUpdate.bits.clearValid) {
         next.valid := false.B
       }.otherwise {
@@ -118,28 +124,12 @@ class VAGQEntryTable(implicit p: Parameters) extends VAGQModule {
     }
   }
 
-  private def applyEnqueueUpdate(next: VAGQEntry, curr: VAGQEntry, idx: UInt): Unit = {
-    val addrFireThisVec = addrFire.zip(io.addrUop).map { case (fire, addrUop) =>
-      fire && addrUop.bits.entryIdx === idx
-    }
-    val addrFireThis = addrFireThisVec.reduce(_ || _)
-    val dataFireThisVec = dataFire.zip(io.dataUop).map { case (fire, dataUop) =>
-      fire && dataUop.bits.entryIdx === idx
-    }
-    val dataFireThis = dataFireThisVec.reduce(_ || _)
-
-    addrFireThisVec.zip(io.addrUop).zip(addrMaskGen).foreach { case ((fireThis, addrUop), maskGen) =>
-      when(fireThis) {
-        connectSamePort(next, addrUop.bits)
-        connectSamePort(next, maskGen.out)
-      }
-    }
-    dataFireThisVec.zip(io.dataUop).foreach { case (fireThis, dataUop) =>
-      when(fireThis) {
-        connectSamePort(next, dataUop.bits)
-      }
-    }
-
+  private def applyEnqueueStateUpdate(
+    next: VAGQEntry,
+    curr: VAGQEntry,
+    addrFireThis: Bool,
+    dataFireThis: Bool
+  ): Unit = {
     when(addrFireThis && dataFireThis) {
       enterSplit(next)
     }.elsewhen(addrFireThis) {
@@ -157,23 +147,59 @@ class VAGQEntryTable(implicit p: Parameters) extends VAGQModule {
     }
   }
 
-  private def applyFlushUpdate(next: VAGQEntry, curr: VAGQEntry): Unit = {
-    when(curr.valid && curr.robIdx.needFlush(io.redirect)) {
+  private def applyFlushUpdate(next: VAGQEntry, flushHit: Bool): Unit = {
+    when(flushHit) {
       next.valid := false.B
     }
   }
 
   for (i <- 0 until vagqSize) {
     val idx = i.U(vagqEntryIdxWidth.W)
+    val addrFireThisVec = addrFire.zip(io.addrUop).map { case (fire, addrUop) =>
+      fire && addrUop.bits.entryIdx === idx
+    }
+    val addrFireThis = addrFireThisVec.reduce(_ || _)
+    val dataFireThisVec = dataFire.zip(io.dataUop).map { case (fire, dataUop) =>
+      fire && dataUop.bits.entryIdx === idx
+    }
+    val dataFireThis = dataFireThisVec.reduce(_ || _)
+    val enqueueThis = addrFireThis || dataFireThis
+    val reqUpdateHits = reqBitmapUpdates.map(update => update.valid && update.bits.entryIdx === idx)
+    val reqUpdateThis = reqUpdateHits.reduce(_ || _)
+    val mergeStateThis = io.mergeStateUpdate.valid && io.mergeStateUpdate.bits.entryIdx === idx
+    val mergeStateWrite = mergeStateThis && !io.mergeStateUpdate.bits.clearValid
+    val mergeClearThis = mergeStateThis && io.mergeStateUpdate.bits.clearValid
+    val flushThis = entries(i).valid && entries(i).robIdx.needFlush(io.redirect)
+
+    val staticNext = WireInit(entryStaticReg(i))
+    addrFireThisVec.zip(io.addrUop).zip(addrMaskGen).foreach { case ((fireThis, addrUop), maskGen) =>
+      when(fireThis) {
+        connectSamePort(staticNext, addrUop.bits)
+        connectSamePort(staticNext, maskGen.out)
+      }
+    }
+    dataFireThisVec.zip(io.dataUop).foreach { case (fireThis, dataUop) =>
+      when(fireThis) {
+        connectSamePort(staticNext, dataUop.bits)
+      }
+    }
+    when(enqueueThis) {
+      entryStaticReg(i) := staticNext
+    }
+
     val next = WireInit(entries(i))
 
-    applyReqBitmapUpdate(next, entries(i), idx)
-    applyMergeStateUpdate(next, idx)
-    applyEnqueueUpdate(next, entries(i), idx)
-    applyFlushUpdate(next, entries(i))
+    applyReqBitmapUpdate(next, entries(i), reqUpdateHits, reqUpdateThis)
+    applyMergeStateUpdate(next, mergeStateThis)
+    applyEnqueueStateUpdate(next, entries(i), addrFireThis, dataFireThis)
+    applyFlushUpdate(next, flushThis)
 
-    entryReg(i) := next
-    entryValid(i) := next.valid
+    when(reqUpdateThis || mergeStateWrite || enqueueThis) {
+      entryDynamicReg(i) := next.dynamic
+    }
+    when(enqueueThis || mergeClearThis || flushThis) {
+      entryValid(i) := next.valid
+    }
   }
 
   io.entries := entries
@@ -189,8 +215,7 @@ class VAGQEntryTableIO(implicit p: Parameters) extends VAGQBundle {
   val redirect         = Flipped(Valid(new Redirect))
 }
 
-class VAGQEntryMeta(implicit p: Parameters) extends VAGQBundle {
-  val valid = Bool()
+class VAGQEntryStatic(implicit p: Parameters) extends VAGQBundle {
   val meta = new VAGQMeta
   val uopType = UInt(3.W)
   val robIdx = new RobPtr
@@ -202,27 +227,58 @@ class VAGQEntryMeta(implicit p: Parameters) extends VAGQBundle {
 
   val ieew = UInt(EewWidth.W)
   val deew = UInt(EewWidth.W)
-  val useVstart = Bool()
-  val vma = Bool()
-  val vta = Bool()
   val uopIdx = UInt(UopIdxWidth.W)
   val elemActiveMask = UInt(vagqFlowBytes.W)
   val elemAgnosticMask = UInt(vagqFlowBytes.W)
 
   val nf = UInt(NfWidth.W)
 
+  def isLoad: Bool    = VAGQUopType.isLoad(uopType)
+  def isStore: Bool   = VAGQUopType.isStore(uopType)
+  def isStride: Bool  = VAGQUopType.isStride(uopType)
+  def isIndexed: Bool = VAGQUopType.isIndexed(uopType)
+  def isOrdered: Bool = VAGQUopType.isOrdered(uopType)
+}
+
+class VAGQEntryDynamic(implicit p: Parameters) extends VAGQBundle {
   val reqSent = UInt(vagqFlowBytes.W)
   val reqAck = UInt(vagqFlowBytes.W)
 
   val exceptionNumber = UInt(ExceptionNumberWidth.W)
   val faultElemIdx = UInt(vagqFlowByteWidth.W)
   val state = UInt(3.W)
+}
 
-  def isLoad: Bool    = VAGQUopType.isLoad(uopType)
-  def isStore: Bool   = VAGQUopType.isStore(uopType)
-  def isStride: Bool  = VAGQUopType.isStride(uopType)
-  def isIndexed: Bool = VAGQUopType.isIndexed(uopType)
-  def isOrdered: Bool = VAGQUopType.isOrdered(uopType)
+class VAGQEntryMeta(implicit p: Parameters) extends VAGQBundle {
+  val valid = Bool()
+  val static = new VAGQEntryStatic
+  val dynamic = new VAGQEntryDynamic
+
+  def meta: VAGQMeta = static.meta
+  def uopType: UInt = static.uopType
+  def robIdx: RobPtr = static.robIdx
+  def pdest: UInt = static.pdest
+  def psrc2: UInt = static.psrc2
+  def baseAddr: UInt = static.baseAddr
+  def op2Data: UInt = static.op2Data
+  def ieew: UInt = static.ieew
+  def deew: UInt = static.deew
+  def uopIdx: UInt = static.uopIdx
+  def elemActiveMask: UInt = static.elemActiveMask
+  def elemAgnosticMask: UInt = static.elemAgnosticMask
+  def nf: UInt = static.nf
+
+  def reqSent: UInt = dynamic.reqSent
+  def reqAck: UInt = dynamic.reqAck
+  def exceptionNumber: UInt = dynamic.exceptionNumber
+  def faultElemIdx: UInt = dynamic.faultElemIdx
+  def state: UInt = dynamic.state
+
+  def isLoad: Bool    = static.isLoad
+  def isStore: Bool   = static.isStore
+  def isStride: Bool  = static.isStride
+  def isIndexed: Bool = static.isIndexed
+  def isOrdered: Bool = static.isOrdered
 }
 
 class VAGQEntry(implicit p: Parameters) extends VAGQEntryMeta
