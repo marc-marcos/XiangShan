@@ -13,12 +13,13 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
   private val respAcceptedVec = VecInit(respVec.map { resp =>
     resp.valid && respMatchesEntry(resp.bits, io.entry, numEntries)
   })
-  private val respExceptionHit = Wire(Vec(numEntries, Bool()))
-  for (i <- 0 until numEntries) {
-    respExceptionHit(i) := respVec.zip(respAcceptedVec).map { case (resp, accepted) =>
-      accepted && resp.bits.exception && resp.bits.entryIdx === i.U(vagqEntryIdxWidth.W)
-    }.reduce(_ || _)
-  }
+  private val respExceptionOH = respVec.zip(respAcceptedVec).map { case (resp, accepted) =>
+    Mux(
+      accepted && resp.bits.exception,
+      UIntToOH(resp.bits.entryIdx, numEntries),
+      0.U(numEntries.W)
+    )
+  }.reduce(_ | _)
 
   for (lane <- 0 until VAGQConstants.MergeRespWidth) {
     val resp = respVec(lane)
@@ -46,7 +47,7 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
     entryAlive(x.entry, io.redirect) && x.entry.state === VAGQEntryState.excp && !reqInFlight
   })
   private val splitDoneCandidates = VecInit(io.entry.zipWithIndex.map { case (x, i) =>
-    entryAlive(x.entry, io.redirect) && x.entry.state === VAGQEntryState.split && x.entry.reqAck.andR && !respExceptionHit(i)
+    entryAlive(x.entry, io.redirect) && x.entry.state === VAGQEntryState.split && x.entry.reqAck.andR && !respExceptionOH(i)
   })
 
   private val hasMerge     = mergeCandidates.asUInt.orR
