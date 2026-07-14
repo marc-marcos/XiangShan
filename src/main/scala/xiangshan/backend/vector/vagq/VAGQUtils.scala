@@ -32,9 +32,10 @@ trait HasVAGQHelper extends HasCircularQueuePtrHelper { this: HasVAGQParameters 
     (0 until numEntries).map(i => idx === i.U)
   }
 
-  protected def respMatchesEntry(resp: VAGQResp, entries: Vec[CtrlInput], numEntries: Int): Bool = {
-    val hit = idxHitSeq(resp.entryIdx, numEntries)
-    VecInit(hit).asUInt.orR && Mux1H(hit, entries.map(x => x.entry.valid && x.entry.robIdx === resp.robIdx))
+  protected def respMatchedEntryOH(resp: VAGQResp, entries: Vec[CtrlInput], numEntries: Int): UInt = {
+    val entryOH = UIntToOH(resp.entryIdx, numEntries)
+    val robMatchOH = VecInit(entries.map(x => x.entry.valid && x.entry.robIdx === resp.robIdx)).asUInt
+    entryOH & robMatchOH
   }
 
   protected def entryAlive(entry: VAGQEntryMeta, redirect: ValidIO[Redirect]): Bool = {

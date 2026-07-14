@@ -10,15 +10,12 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
   val io = IO(new MergeCtrlIO(numEntries))
 
   private val respVec = io.lduResp.toSeq ++ io.staResp.toSeq ++ Seq(io.lsqEmptyResp)
-  private val respAcceptedVec = VecInit(respVec.map { resp =>
-    resp.valid && respMatchesEntry(resp.bits, io.entry, numEntries)
+  private val respMatchedEntryOHVec = VecInit(respVec.map { resp =>
+    Mux(resp.valid, respMatchedEntryOH(resp.bits, io.entry, numEntries), 0.U(numEntries.W))
   })
-  private val respExceptionOH = respVec.zip(respAcceptedVec).map { case (resp, accepted) =>
-    Mux(
-      accepted && resp.bits.exception,
-      UIntToOH(resp.bits.entryIdx, numEntries),
-      0.U(numEntries.W)
-    )
+  private val respAcceptedVec = VecInit(respMatchedEntryOHVec.map(_.orR))
+  private val respExceptionOH = respVec.zip(respMatchedEntryOHVec).map { case (resp, matchedOH) =>
+    Mux(resp.bits.exception, matchedOH, 0.U(numEntries.W))
   }.reduce(_ | _)
 
   for (lane <- 0 until VAGQConstants.MergeRespWidth) {
@@ -61,13 +58,14 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
   private val hasSplitDone = splitDoneCandidates.asUInt.orR
 
   private val mergeSel     = PriorityEncoder(mergeCandidates)
-  private val wbSel        = PriorityEncoder(wbCandidates)
-  private val excpSel      = PriorityEncoder(excpCandidates)
   private val splitDoneSel = PriorityEncoder(splitDoneCandidates)
   private val mergeEntry     = io.entry(mergeSel)
-  private val wbEntry        = io.entry(wbSel)
-  private val excpEntry      = io.entry(excpSel)
   private val splitDoneEntry = io.entry(splitDoneSel)
+
+  private val wbSelOH = PriorityEncoderOH(wbCandidates.asUInt) & Fill(numEntries, hasWb)
+  private val excpSelOH = PriorityEncoderOH(excpCandidates.asUInt) & Fill(numEntries, hasExcp)
+  private val robWritebackSelOH = Mux(hasExcp, excpSelOH, wbSelOH)
+  private val robWritebackEntry = Mux1H(robWritebackSelOH.asBools, io.entry)
 
   private val skipMerge = splitDoneEntry.entry.elemActiveMask.andR
   private val splitDoneStateNext = Mux(
@@ -121,17 +119,17 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
 
   io.robWriteback.valid                := (hasWb || hasExcp) && !hasSplitDone && !vrfWriteValid
   io.robWriteback.bits                 := 0.U.asTypeOf(io.robWriteback.bits)
-  io.robWriteback.bits.meta            := Mux(hasExcp, excpEntry.entry.meta, wbEntry.entry.meta)
-  io.robWriteback.bits.entryIdx        := Mux(hasExcp, excpEntry.entryIdx, wbEntry.entryIdx)
-  io.robWriteback.bits.robIdx          := Mux(hasExcp, excpEntry.entry.robIdx, wbEntry.entry.robIdx)
+  io.robWriteback.bits.meta            := robWritebackEntry.entry.meta
+  io.robWriteback.bits.entryIdx        := robWritebackEntry.entryIdx
+  io.robWriteback.bits.robIdx          := robWritebackEntry.entry.robIdx
   io.robWriteback.bits.exception       := hasExcp
-  io.robWriteback.bits.exceptionNumber := Mux(hasExcp, excpEntry.entry.exceptionNumber, 0.U)
-  io.robWriteback.bits.faultElemIdx    := Mux(hasExcp, excpEntry.entry.faultElemIdx, 0.U)
-  io.robWriteback.bits.faultVstart     := Mux(hasExcp, faultVstart(excpEntry.entry), 0.U)
-  io.robWriteback.bits.uopType         := Mux(hasExcp, excpEntry.entry.uopType, wbEntry.entry.uopType)
-  io.robWriteback.bits.uopIdx          := Mux(hasExcp, excpEntry.entry.uopIdx, wbEntry.entry.uopIdx)
-  io.robWriteback.bits.deew            := Mux(hasExcp, excpEntry.entry.deew, wbEntry.entry.deew)
-  io.robWriteback.bits.nf              := Mux(hasExcp, excpEntry.entry.nf, wbEntry.entry.nf)
+  io.robWriteback.bits.exceptionNumber := Mux(hasExcp, robWritebackEntry.entry.exceptionNumber, 0.U)
+  io.robWriteback.bits.faultElemIdx    := Mux(hasExcp, robWritebackEntry.entry.faultElemIdx, 0.U)
+  io.robWriteback.bits.faultVstart     := Mux(hasExcp, faultVstart(robWritebackEntry.entry), 0.U)
+  io.robWriteback.bits.uopType         := robWritebackEntry.entry.uopType
+  io.robWriteback.bits.uopIdx          := robWritebackEntry.entry.uopIdx
+  io.robWriteback.bits.deew            := robWritebackEntry.entry.deew
+  io.robWriteback.bits.nf              := robWritebackEntry.entry.nf
 
   when(mergeReadValid) {
     when(!mergeReadAlive || vrfReadRespAlive) {
