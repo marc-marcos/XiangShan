@@ -132,6 +132,7 @@ trait HasVAGQHelper extends HasCircularQueuePtrHelper { this: HasVAGQParameters 
   }
 
   protected def enterSplit(entry: VAGQEntryMeta): Unit = {
+    entry.valid   := true.B
     entry.state   := VAGQEntryState.split
     entry.reqSent := 0.U
     entry.reqAck  := 0.U
