@@ -64,8 +64,7 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
   private val excpEntry      = io.entry(excpSel)
   private val splitDoneEntry = io.entry(splitDoneSel)
 
-  private val splitDoneNonActiveMask = ~splitDoneEntry.entry.elemActiveMask
-  private val skipMerge = !splitDoneNonActiveMask.orR
+  private val skipMerge = splitDoneEntry.entry.elemActiveMask.andR
   private val splitDoneStateNext = Mux(
     splitDoneEntry.entry.isStore | skipMerge,
     VAGQEntryState.wb,
