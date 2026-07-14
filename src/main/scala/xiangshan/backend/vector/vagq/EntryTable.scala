@@ -290,12 +290,22 @@ class VAGQEntryStateUpdate(implicit p: Parameters) extends VAGQBundle {
 }
 
 object VAGQEntryState {
-  val waitA  = "b001".U(3.W)
-  val waitSI = "b010".U(3.W)
-  val split  = "b011".U(3.W)
-  val merge  = "b100".U(3.W)
-  val wb     = "b101".U(3.W)
-  val excp   = "b110".U(3.W)
+  val width = 3
+  val numStates = 1 << width
+
+  val waitAId  = 1
+  val waitSIId = 2
+  val splitId  = 3
+  val mergeId  = 4
+  val wbId     = 5
+  val excpId   = 6
+
+  val waitA  = waitAId.U(width.W)
+  val waitSI = waitSIId.U(width.W)
+  val split  = splitId.U(width.W)
+  val merge  = mergeId.U(width.W)
+  val wb     = wbId.U(width.W)
+  val excp   = excpId.U(width.W)
 }
 
 object VAGQUopType {

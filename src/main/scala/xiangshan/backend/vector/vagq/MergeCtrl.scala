@@ -36,18 +36,23 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
     io.reqUpdate(lane).bits.faultElemIdx    := resp.bits.byteOffset
   }
 
-  private val mergeCandidates = VecInit(io.entry.map { x =>
-    entryAlive(x.entry, io.redirect) && x.entry.state === VAGQEntryState.merge
+  private val entryAliveVec = VecInit(io.entry.map(x => entryAlive(x.entry, io.redirect)))
+  private val entryStateOH = VecInit(io.entry.map(x => UIntToOH(x.entry.state, VAGQEntryState.numStates)))
+
+  private val mergeCandidates = VecInit(io.entry.indices.map { i =>
+    entryAliveVec(i) && entryStateOH(i)(VAGQEntryState.mergeId)
   })
-  private val wbCandidates = VecInit(io.entry.map { x =>
-    entryAlive(x.entry, io.redirect) && x.entry.state === VAGQEntryState.wb
+  private val wbCandidates = VecInit(io.entry.indices.map { i =>
+    entryAliveVec(i) && entryStateOH(i)(VAGQEntryState.wbId)
   })
-  private val excpCandidates = VecInit(io.entry.map { x =>
-    val reqInFlight = (x.entry.reqSent & ~x.entry.reqAck).orR
-    entryAlive(x.entry, io.redirect) && x.entry.state === VAGQEntryState.excp && !reqInFlight
+  private val excpCandidates = VecInit(io.entry.indices.map { i =>
+    val entry = io.entry(i).entry
+    val reqInFlight = (entry.reqSent & ~entry.reqAck).orR
+    entryAliveVec(i) && entryStateOH(i)(VAGQEntryState.excpId) && !reqInFlight
   })
-  private val splitDoneCandidates = VecInit(io.entry.zipWithIndex.map { case (x, i) =>
-    entryAlive(x.entry, io.redirect) && x.entry.state === VAGQEntryState.split && x.entry.reqAck.andR && !respExceptionOH(i)
+  private val splitDoneCandidates = VecInit(io.entry.indices.map { i =>
+    val entry = io.entry(i).entry
+    entryAliveVec(i) && entryStateOH(i)(VAGQEntryState.splitId) && entry.reqAck.andR && !respExceptionOH(i)
   })
 
   private val hasMerge     = mergeCandidates.asUInt.orR
