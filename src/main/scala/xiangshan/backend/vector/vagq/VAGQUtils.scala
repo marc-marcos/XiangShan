@@ -101,12 +101,6 @@ trait HasVAGQHelper extends HasCircularQueuePtrHelper { this: HasVAGQParameters 
     }).asUInt
   }
 
-  protected def mergeBytes(oldData: UInt, newData: UInt, mask: UInt): UInt = {
-    VecInit((0 until vagqFlowBytes).map(i =>
-      Mux(mask(i), newData(8 * (i + 1) - 1, 8 * i), oldData(8 * (i + 1) - 1, 8 * i))
-    )).asUInt
-  }
-
   protected def elemOrdFromUop(uopIdx: UInt, elemIdx: UInt, deew: UInt): UInt = {
     val elemIdx4 = elemIdx(vagqFlowByteWidth - 1, 0)
     val e8  = Cat(uopIdx, elemIdx4)

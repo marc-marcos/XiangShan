@@ -100,7 +100,7 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
 
   private val nonActiveMask = ~mergePendingEntry.entry.elemActiveMask
   private val agnosticMask  = mergePendingEntry.entry.elemAgnosticMask
-  private val mergeWriteData = mergeBytes(mergeRespData, Fill(VLEN, true.B), agnosticMask & nonActiveMask)
+  private val mergeWriteData = mergeRespData | FillInterleaved(8, agnosticMask & nonActiveMask)
 
   io.vrfWriteReq.valid := mergeRespAlive && !hasSplitDone
   io.vrfWriteReq.bits  := 0.U.asTypeOf(io.vrfWriteReq.bits)
