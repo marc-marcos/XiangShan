@@ -147,7 +147,7 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
   }
 
   when(mergeRespValid) {
-    when(!mergeRespValid || vrfWriteValid) {
+    when(!mergeRespAlive || vrfWriteValid) {
       mergeRespValid := false.B
     }
   }.elsewhen(vrfReadRespAlive) {
