@@ -75,12 +75,15 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
   io.stateUpdate.valid := false.B
   io.stateUpdate.bits  := 0.U.asTypeOf(io.stateUpdate.bits)
 
-  private val mergePendingEntryIdx = RegInit(0.U(vagqEntryIdxWidth.W))
-  private val mergePendingRobIdx   = RegInit(0.U.asTypeOf(new RobPtr))
-  private val mergePendingEntry    = mergeEntryAt(io.entry, mergePendingEntryIdx, numEntries)
-  private val mergePendingAlive    = mergePendingEntry.entry.state === VAGQEntryState.merge &&
-                                     mergePendingEntry.entry.robIdx === mergePendingRobIdx &&
-                                     entryAlive(mergePendingEntry.entry, io.redirect)
+  private val mergePendingEntryIdx          = RegInit(0.U(vagqEntryIdxWidth.W))
+  private val mergePendingRobIdx            = RegInit(0.U.asTypeOf(new RobPtr))
+  private val mergePendingPdest             = Reg(UInt(VfPhyRegIdxWidth.W))
+  private val mergePendingWriteMask         = Reg(UInt(vagqFlowBytes.W))
+  private val mergePendingAgnosticWriteMask = Reg(UInt(vagqFlowBytes.W))
+  private val mergePendingEntry             = mergeEntryAt(io.entry, mergePendingEntryIdx, numEntries)
+  private val mergePendingAlive             = mergePendingEntry.entry.state === VAGQEntryState.merge &&
+                                              mergePendingEntry.entry.robIdx === mergePendingRobIdx &&
+                                              entryAlive(mergePendingEntry.entry, io.redirect)
 
   private val mergeReadValid = RegInit(false.B)
   private val mergeReadAlive = mergeReadValid && mergePendingAlive
@@ -94,21 +97,21 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
   io.vrfReadReq.bits.robIdx   := mergeEntry.entry.robIdx
   io.vrfReadReq.bits.psrc     := mergeEntry.entry.psrc2
 
+  private val mergeEntryWriteMask = ~mergeEntry.entry.elemActiveMask
+
   private val vrfReadRespAlive = mergeReadAlive &&
                                  io.vrfReadResp.valid &&
                                  io.vrfReadResp.bits.entryIdx === mergePendingEntryIdx &&
                                  io.vrfReadResp.bits.robIdx === mergePendingRobIdx
 
-  private val nonActiveMask = ~mergePendingEntry.entry.elemActiveMask
-  private val agnosticMask  = mergePendingEntry.entry.elemAgnosticMask
-  private val mergeWriteData = mergeRespData | FillInterleaved(8, agnosticMask & nonActiveMask)
+  private val mergeWriteData = mergeRespData | FillInterleaved(8, mergePendingAgnosticWriteMask)
 
   io.vrfWriteReq.valid := mergeRespAlive && !hasSplitDone
   io.vrfWriteReq.bits  := 0.U.asTypeOf(io.vrfWriteReq.bits)
   io.vrfWriteReq.bits.entryIdx := mergePendingEntryIdx
-  io.vrfWriteReq.bits.pdest    := mergePendingEntry.entry.pdest
+  io.vrfWriteReq.bits.pdest    := mergePendingPdest
   io.vrfWriteReq.bits.data     := mergeWriteData
-  io.vrfWriteReq.bits.mask     := nonActiveMask
+  io.vrfWriteReq.bits.mask     := mergePendingWriteMask
 
   private val vrfWriteValid = io.vrfWriteReq.valid
 
@@ -131,9 +134,12 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
       mergeReadValid := false.B
     }
   }.elsewhen(io.vrfReadReq.valid) {
-    mergeReadValid       := true.B
-    mergePendingEntryIdx := io.vrfReadReq.bits.entryIdx
-    mergePendingRobIdx   := io.vrfReadReq.bits.robIdx
+    mergeReadValid                := true.B
+    mergePendingEntryIdx          := io.vrfReadReq.bits.entryIdx
+    mergePendingRobIdx            := io.vrfReadReq.bits.robIdx
+    mergePendingPdest             := mergeEntry.entry.pdest
+    mergePendingWriteMask         := mergeEntryWriteMask
+    mergePendingAgnosticWriteMask := mergeEntry.entry.elemAgnosticMask & mergeEntryWriteMask
   }
 
   when(mergeRespValid) {
