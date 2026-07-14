@@ -42,9 +42,8 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
     entryAlive(x.entry, io.redirect) && x.entry.state === VAGQEntryState.wb
   })
   private val excpCandidates = VecInit(io.entry.map { x =>
-    val olderReqMask = prefixMask(x.entry.faultElemIdx)
-    val olderReqInFlight = (x.entry.reqSent & ~x.entry.reqAck & olderReqMask).orR
-    entryAlive(x.entry, io.redirect) && x.entry.state === VAGQEntryState.excp && !olderReqInFlight
+    val reqInFlight = (x.entry.reqSent & ~x.entry.reqAck).orR
+    entryAlive(x.entry, io.redirect) && x.entry.state === VAGQEntryState.excp && !reqInFlight
   })
   private val splitDoneCandidates = VecInit(io.entry.zipWithIndex.map { case (x, i) =>
     entryAlive(x.entry, io.redirect) && x.entry.state === VAGQEntryState.split && x.entry.reqAck.andR && !respExceptionHit(i)

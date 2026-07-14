@@ -41,10 +41,6 @@ trait HasVAGQHelper extends HasCircularQueuePtrHelper { this: HasVAGQParameters 
     entry.valid && !entry.robIdx.needFlush(redirect)
   }
 
-  protected def prefixMask(limit: UInt): UInt = {
-    VecInit((0 until vagqFlowBytes).map(i => i.U < limit)).asUInt
-  }
-
   protected def lowBit(mask: UInt): UInt = PriorityEncoder(mask)
 
   protected def highBit(mask: UInt): UInt = (vagqFlowBytes - 1).U - PriorityEncoder(Reverse(mask))
