@@ -68,6 +68,9 @@ class VAGQEntryTable(implicit p: Parameters) extends VAGQModule {
   private val addrFire = io.addrUop.map(addrUop => addrUop.fire && !addrUop.bits.robIdx.needFlush(io.redirect))
   private val dataFire = io.dataUop.map(dataUop => dataUop.fire && !dataUop.bits.robIdx.needFlush(io.redirect))
   private val reqBitmapUpdates = io.splitUpdate.toSeq ++ io.mergeReqUpdate.toSeq
+  private val reqUpdateEntryOH = reqBitmapUpdates.map { update =>
+    Mux(update.valid, UIntToOH(update.bits.entryIdx, vagqSize), 0.U(vagqSize.W))
+  }
 
   private def mergedUpdateMask(updateHits: Seq[Bool], select: VAGQReqBitmapUpdate => UInt): UInt = {
     reqBitmapUpdates.zip(updateHits).map { case (update, hit) =>
@@ -91,25 +94,15 @@ class VAGQEntryTable(implicit p: Parameters) extends VAGQModule {
   private def applyReqBitmapUpdate(
     next: VAGQEntry,
     curr: VAGQEntry,
-    updateHits: Seq[Bool],
-    hasUpdate: Bool
+    update: VAGQReqBitmapUpdateAggregate
   ): Unit = {
-    val setReqSent = mergedUpdateMask(updateHits, _.setReqSent)
-    val clearReqSent = mergedUpdateMask(updateHits, _.clearReqSent)
-    val setReqAck = mergedUpdateMask(updateHits, _.setReqAck)
-    val exceptionHits = reqBitmapUpdates.zip(updateHits).map { case (update, hit) =>
-      hit && update.bits.exception
+    when(update.hasUpdate) {
+      next.reqSent := (curr.reqSent | update.setReqSent) & ~update.clearReqSent
+      next.reqAck  := curr.reqAck | update.setReqAck
     }
-    val hasExceptionUpdate = exceptionHits.reduce(_ || _)
-    val exceptionUpdate = selectFirstFaultException(exceptionHits)
-
-    when(hasUpdate) {
-      next.reqSent := (curr.reqSent | setReqSent) & ~clearReqSent
-      next.reqAck  := curr.reqAck | setReqAck
-    }
-    when(hasExceptionUpdate) {
-      next.exceptionNumber := exceptionUpdate.exceptionNumber
-      next.faultElemIdx    := exceptionUpdate.faultElemIdx
+    when(update.hasException) {
+      next.exceptionNumber := update.exceptionNumber
+      next.faultElemIdx    := update.faultElemIdx
       next.state           := VAGQEntryState.excp
     }
   }
@@ -153,6 +146,23 @@ class VAGQEntryTable(implicit p: Parameters) extends VAGQModule {
     }
   }
 
+  private val reqUpdateAggregates = Wire(Vec(vagqSize, new VAGQReqBitmapUpdateAggregate))
+  for (i <- 0 until vagqSize) {
+    val updateHits = reqUpdateEntryOH.map(_(i))
+    val exceptionHits = reqBitmapUpdates.zip(updateHits).map { case (update, hit) =>
+      hit && update.bits.exception
+    }
+    val exceptionUpdate = selectFirstFaultException(exceptionHits)
+
+    reqUpdateAggregates(i).hasUpdate       := updateHits.reduce(_ || _)
+    reqUpdateAggregates(i).setReqSent      := mergedUpdateMask(updateHits, _.setReqSent)
+    reqUpdateAggregates(i).clearReqSent    := mergedUpdateMask(updateHits, _.clearReqSent)
+    reqUpdateAggregates(i).setReqAck       := mergedUpdateMask(updateHits, _.setReqAck)
+    reqUpdateAggregates(i).hasException    := exceptionHits.reduce(_ || _)
+    reqUpdateAggregates(i).exceptionNumber := exceptionUpdate.exceptionNumber
+    reqUpdateAggregates(i).faultElemIdx    := exceptionUpdate.faultElemIdx
+  }
+
   for (i <- 0 until vagqSize) {
     val idx = i.U(vagqEntryIdxWidth.W)
     val addrFireThisVec = addrFire.zip(io.addrUop).map { case (fire, addrUop) =>
@@ -164,8 +174,7 @@ class VAGQEntryTable(implicit p: Parameters) extends VAGQModule {
     }
     val dataFireThis = dataFireThisVec.reduce(_ || _)
     val enqueueThis = addrFireThis || dataFireThis
-    val reqUpdateHits = reqBitmapUpdates.map(update => update.valid && update.bits.entryIdx === idx)
-    val reqUpdateThis = reqUpdateHits.reduce(_ || _)
+    val reqUpdateThis = reqUpdateAggregates(i).hasUpdate
     val mergeStateThis = io.mergeStateUpdate.valid && io.mergeStateUpdate.bits.entryIdx === idx
     val mergeStateWrite = mergeStateThis && !io.mergeStateUpdate.bits.clearValid
     val mergeClearThis = mergeStateThis && io.mergeStateUpdate.bits.clearValid
@@ -189,7 +198,7 @@ class VAGQEntryTable(implicit p: Parameters) extends VAGQModule {
 
     val next = WireInit(entries(i))
 
-    applyReqBitmapUpdate(next, entries(i), reqUpdateHits, reqUpdateThis)
+    applyReqBitmapUpdate(next, entries(i), reqUpdateAggregates(i))
     applyMergeStateUpdate(next, mergeStateThis)
     applyEnqueueStateUpdate(next, entries(i), addrFireThis, dataFireThis)
     applyFlushUpdate(next, flushThis)
@@ -213,6 +222,16 @@ class VAGQEntryTableIO(implicit p: Parameters) extends VAGQBundle {
   val mergeReqUpdate   = Flipped(Vec(VAGQConstants.MergeRespWidth, Valid(new VAGQReqBitmapUpdate)))
   val mergeStateUpdate = Flipped(Valid(new VAGQEntryStateUpdate))
   val redirect         = Flipped(Valid(new Redirect))
+}
+
+class VAGQReqBitmapUpdateAggregate(implicit p: Parameters) extends VAGQBundle {
+  val hasUpdate       = Bool()
+  val setReqSent      = UInt(vagqFlowBytes.W)
+  val clearReqSent    = UInt(vagqFlowBytes.W)
+  val setReqAck       = UInt(vagqFlowBytes.W)
+  val hasException    = Bool()
+  val exceptionNumber = UInt(ExceptionNumberWidth.W)
+  val faultElemIdx    = UInt(vagqFlowByteWidth.W)
 }
 
 class VAGQEntryStatic(implicit p: Parameters) extends VAGQBundle {

@@ -9,9 +9,19 @@ import xiangshan.backend.rob.RobPtr
 class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
   val io = IO(new MergeCtrlIO(numEntries))
 
+  private val entryAliveVec = VecInit(io.entry.map(x => entryAlive(x.entry, io.redirect)))
+  private val entryStateOH = VecInit(io.entry.map(x => UIntToOH(x.entry.state, VAGQEntryState.numStates)))
+  private val respCanAcceptEntryOH = VecInit(io.entry.indices.map { i =>
+    entryAliveVec(i) && (entryStateOH(i)(VAGQEntryState.splitId) || entryStateOH(i)(VAGQEntryState.excpId))
+  }).asUInt
+
   private val respVec = io.lduResp.toSeq ++ io.staResp.toSeq ++ Seq(io.lsqEmptyResp)
   private val respMatchedEntryOHVec = VecInit(respVec.map { resp =>
-    Mux(resp.valid, respMatchedEntryOH(resp.bits, io.entry, numEntries), 0.U(numEntries.W))
+    Mux(
+      resp.valid,
+      respMatchedEntryOH(resp.bits, io.entry, numEntries) & respCanAcceptEntryOH,
+      0.U(numEntries.W)
+    )
   })
   private val respAcceptedVec = VecInit(respMatchedEntryOHVec.map(_.orR))
   private val respExceptionOH = respVec.zip(respMatchedEntryOHVec).map { case (resp, matchedOH) =>
@@ -32,9 +42,6 @@ class MergeCtrl(numEntries: Int)(implicit p: Parameters) extends VAGQModule {
     io.reqUpdate(lane).bits.exceptionNumber := resp.bits.exceptionNumber
     io.reqUpdate(lane).bits.faultElemIdx    := resp.bits.byteOffset
   }
-
-  private val entryAliveVec = VecInit(io.entry.map(x => entryAlive(x.entry, io.redirect)))
-  private val entryStateOH = VecInit(io.entry.map(x => UIntToOH(x.entry.state, VAGQEntryState.numStates)))
 
   private val mergeCandidates = VecInit(io.entry.indices.map { i =>
     entryAliveVec(i) && entryStateOH(i)(VAGQEntryState.mergeId)
