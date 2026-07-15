@@ -36,6 +36,7 @@ import xiangshan.frontend.bpu.history.commonhr.CommonHR
 import xiangshan.frontend.bpu.history.commonhr.CommonHRMeta
 import xiangshan.frontend.bpu.history.phr.Phr
 import xiangshan.frontend.bpu.history.phr.PhrAllFoldedHistories
+import xiangshan.frontend.bpu.history.phr.PhrDiff
 import xiangshan.frontend.bpu.ittage.Ittage
 import xiangshan.frontend.bpu.mbtb.MainBtb
 import xiangshan.frontend.bpu.ras.MicroRas
@@ -67,6 +68,7 @@ class Bpu(implicit p: Parameters) extends BpuModule with HalfAlignHelper {
   private val sc          = Module(new Sc)
   private val ras         = Module(new Ras)
   private val phr         = Module(new Phr)
+  private val phrDiff     = Module(new PhrDiff)
   private val commonHR    = Module(new CommonHR)
   private val uras        = Module(new MicroRas)
 
@@ -541,14 +543,80 @@ class Bpu(implicit p: Parameters) extends BpuModule with HalfAlignHelper {
   phr.io.commit.valid := io.fromFtq.train.fire
   phr.io.commit.bits.fromBpuTrain(train)
 
+  phrDiff.io.train.s0_stall             := s0_stall
+  phrDiff.io.train.stageCtrl            := stageCtrl
+  phrDiff.io.train.redirect             := redirect
+  phrDiff.io.train.s3_override          := s3_override
+  phrDiff.io.train.s3_phrMeta           := s3_phrMeta
+  phrDiff.io.train.s3_prediction        := s3_prediction
+  phrDiff.io.train.s3_startPc           := s3_startPc.get
+  phrDiff.io.s1Train.valid              := s1_fire
+  phrDiff.io.s1Train.taken              := s1_prediction.taken
+  phrDiff.io.s1Train.startPc            := s1_startPc.get
+  phrDiff.io.s1Train.abtbValid          := s1_abtbValid
+  phrDiff.io.s1Train.abtbFirstTakenBrOH := s1_abtbFirstTakenBrOH
+  phrDiff.io.s1Train.ubtbPrediction     := s1_ubtbPredWithURas
+  phrDiff.io.s1Train.abtbPrediction     := s1_abtbPredWithURas
+
+  phrDiff.io.commit.valid := io.fromFtq.train.fire
+  phrDiff.io.commit.bits.fromBpuTrain(train)
+
   s0_foldedPhr   := phr.io.s0_foldedPhr
   s1_foldedPhr   := phr.io.s1_foldedPhr
   s2_foldedPhr   := phr.io.s2_foldedPhr
   s3_foldedPhr   := phr.io.s3_foldedPhr
   trainFoldedPhr := phr.io.trainFoldedPhr
-  phrBits        := phr.io.phr.asUInt
+  phrBits        := phr.io.phr
+
+  private val phrDiffCheckEnable = !reset.asBool
+  // private val phrDiff_phr              = phr.io.phr.asUInt =/= phrDiff.io.phr.asUInt
+  private val phrDiff_phrMeta        = phr.io.phrMeta.asUInt =/= phrDiff.io.phrMeta.asUInt
+  private val phrDiff_s0FoldedPhr    = phr.io.s0_foldedPhr.asUInt =/= phrDiff.io.s0_foldedPhr.asUInt
+  private val phrDiff_s1FoldedPhr    = phr.io.s1_foldedPhr.asUInt =/= phrDiff.io.s1_foldedPhr.asUInt
+  private val phrDiff_s2FoldedPhr    = phr.io.s2_foldedPhr.asUInt =/= phrDiff.io.s2_foldedPhr.asUInt
+  private val phrDiff_s3FoldedPhr    = phr.io.s3_foldedPhr.asUInt =/= phrDiff.io.s3_foldedPhr.asUInt
+  private val phrDiff_oldFoldedPhr   = phr.io.oldFoldedPhr.asUInt =/= phrDiff.io.oldFoldedPhr.asUInt
+  private val phrDiff_trainFoldedPhr = phr.io.trainFoldedPhr.asUInt =/= phrDiff.io.trainFoldedPhr.asUInt
+  private val phrDiff_any = phrDiff_phrMeta || phrDiff_s0FoldedPhr ||
+    phrDiff_s1FoldedPhr || phrDiff_s2FoldedPhr || phrDiff_s3FoldedPhr ||
+    phrDiff_oldFoldedPhr || phrDiff_trainFoldedPhr
+  private val phrDiffAnyWithCheck = phrDiffCheckEnable && phrDiff_any
+
+  // val predictFHist_diff_trainFHist =
+  //   io.fromFtq.train.fire && train.meta.phr.predFoldedHist.get.asUInt =/= phr.io.trainFoldedPhr.asUInt
+
+  // XSError(phrDiffCheckEnable && phrDiff_phr, "PhrDiff: phr output mismatch!\n")
+  XSError(phrDiffCheckEnable && phrDiff_phrMeta, "PhrDiff: phrMeta output mismatch!\n")
+  XSError(phrDiffCheckEnable && phrDiff_s0FoldedPhr, "PhrDiff: s0_foldedPhr output mismatch!\n")
+  XSError(phrDiffCheckEnable && phrDiff_s1FoldedPhr, "PhrDiff: s1_foldedPhr output mismatch!\n")
+  XSError(phrDiffCheckEnable && phrDiff_s2FoldedPhr, "PhrDiff: s2_foldedPhr output mismatch!\n")
+  XSError(phrDiffCheckEnable && phrDiff_s3FoldedPhr, "PhrDiff: s3_foldedPhr output mismatch!\n")
+  XSError(phrDiffCheckEnable && phrDiff_oldFoldedPhr, "PhrDiff: oldFoldedPhr output mismatch!\n")
+  // XSError(
+  //   phrDiffCheckEnable && io.fromFtq.train.fire && !predictFHist_diff_trainFHist && phrDiff_trainFoldedPhr,
+  //   "PhrDiff: trainFoldedPhr output mismatch!\n"
+  // )
+
+  // XSPerfAccumulate("phrDiff_phr", phrDiffCheckEnable && phrDiff_phr)
+  XSPerfAccumulate("phrDiff_phrMeta", phrDiffCheckEnable && phrDiff_phrMeta)
+  XSPerfAccumulate("phrDiff_s0FoldedPhr", phrDiffCheckEnable && phrDiff_s0FoldedPhr)
+  XSPerfAccumulate("phrDiff_s1FoldedPhr", phrDiffCheckEnable && phrDiff_s1FoldedPhr)
+  XSPerfAccumulate("phrDiff_s2FoldedPhr", phrDiffCheckEnable && phrDiff_s2FoldedPhr)
+  XSPerfAccumulate("phrDiff_s3FoldedPhr", phrDiffCheckEnable && phrDiff_s3FoldedPhr)
+  XSPerfAccumulate("phrDiff_oldFoldedPhr", phrDiffCheckEnable && phrDiff_oldFoldedPhr)
+  XSPerfAccumulate("phrDiff_trainFoldedPhr", phrDiffCheckEnable && io.fromFtq.train.fire && phrDiff_trainFoldedPhr)
+  XSPerfAccumulate("phrDiff_any", phrDiffAnyWithCheck)
 
   dontTouch(phrBits)
+  // dontTouch(phrDiff_phr)
+  dontTouch(phrDiff_phrMeta)
+  dontTouch(phrDiff_s0FoldedPhr)
+  dontTouch(phrDiff_s1FoldedPhr)
+  dontTouch(phrDiff_s2FoldedPhr)
+  dontTouch(phrDiff_s3FoldedPhr)
+  dontTouch(phrDiff_oldFoldedPhr)
+  dontTouch(phrDiff_trainFoldedPhr)
+  dontTouch(phrDiff_any)
 
   // ghr update
   private val s1_cfiPc = getCfiPcFromPosition(s1_startPc.get, s1_prediction.cfiPosition)
