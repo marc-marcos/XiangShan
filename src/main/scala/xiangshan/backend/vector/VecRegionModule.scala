@@ -79,9 +79,13 @@ class VecRegionImp(
 
   val in = IO(Input(new In))
   val out = IO(Output(new Out))
+  val vagqDataUop = IO(
+    param.genExuBundle(_.hasVStd, DecoupledIO(new VAGQDataSideUop))
+  )
 
   dontTouch(in)
   dontTouch(out)
+  dontTouch(vagqDataUop)
 
   val issueQueues: Seq[VecIssueQueue] = wrapper.issueQueues.map(x => x.module.suggestName(x.param.getInstanceNameOfIQ))
   val issuePipes: Seq[Seq[IssuePipe]] = wrapper.issuePipes.map(_.map(x => x.module.suggestName(x.param.getInstanceNameOfPipe)))
@@ -423,7 +427,7 @@ class VecRegionImp(
     case (sink: MixedVec[ValidIO[StoreQueueDataWrite]], source: Seq[ValidIO[StoreQueueDataWrite]]) => sink := source
   }
 
-  out.toMem.vagqDataUop zip vstdPipes foreach {
+  vagqDataUop zip vstdPipes foreach {
     case (sink: MixedVec[DecoupledIO[VAGQDataSideUop]], source: Seq[IssuePipe]) =>
       sink.zip(source).foreach { case (dataUop, pipe) =>
         val og2DataUop = pipe.out.vagqDataOg2.get
@@ -677,8 +681,6 @@ object VecRegionModule {
   class OutToMem(implicit p: Parameters, param: RegionParam) extends XSBundle {
     val vstd: MixedVec[MixedVec[ValidIO[StoreQueueDataWrite]]] =
       param.genExuBundle(_.hasVStd, ValidIO(new StoreQueueDataWrite))
-    val vagqDataUop: MixedVec[MixedVec[DecoupledIO[VAGQDataSideUop]]] =
-      param.genExuBundle(_.hasVStd, DecoupledIO(new VAGQDataSideUop))
     val vagqVrfReadResp = Valid(new VAGQVRFReadResp)
   }
 

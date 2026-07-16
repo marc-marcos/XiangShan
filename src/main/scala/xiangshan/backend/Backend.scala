@@ -582,11 +582,11 @@ class BackendInlinedImp(override val wrapper: BackendInlined)(implicit p: Parame
       sink := source
   }
   require(
-    io.mem.vagqDataUop.flatten.size == vecRegion.out.toMem.vagqDataUop.flatten.size,
+    io.mem.vagqDataUop.flatten.size == vecRegion.vagqDataUop.flatten.size,
     s"sizes are not equal, io.mem.vagqDataUop.flatten.size = ${io.mem.vagqDataUop.flatten.size}, " +
-      s"vecRegion.out.toMem.vagqDataUop.flatten.size = ${vecRegion.out.toMem.vagqDataUop.flatten.size}",
+      s"vecRegion.vagqDataUop.flatten.size = ${vecRegion.vagqDataUop.flatten.size}",
   )
-  io.mem.vagqDataUop.flatten.zip(vecRegion.out.toMem.vagqDataUop.flatten).foreach {
+  io.mem.vagqDataUop.flatten.zip(vecRegion.vagqDataUop.flatten).foreach {
     case (sink: DecoupledIO[VAGQDataSideUop], source: DecoupledIO[VAGQDataSideUop]) =>
       sink <> source
   }
