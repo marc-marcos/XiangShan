@@ -61,17 +61,17 @@ class AtomicsUnit(val param: ExeUnitParams)(implicit p: Parameters) extends XSMo
   // Atomics Memory Accsess FSM
   //-------------------------------------------------------
   val List(
-    s_invalid, 
-    s_tlb_and_flush_sbuffer_req, 
-    s_pm, 
-    s_wait_flush_sbuffer_resp, 
-    s_cache_req, 
+    s_invalid,
+    s_tlb_and_flush_sbuffer_req,
+    s_pm,
+    s_wait_flush_sbuffer_resp,
+    s_cache_req,
     s_cache_resp,
-    s_cache_resp_latch, 
-    s_finish, 
-    s_finish2, 
-    s_extra_wb2, 
-    s_extra_wb, 
+    s_cache_resp_latch,
+    s_finish,
+    s_finish2,
+    s_extra_wb2,
+    s_extra_wb,
   ) = Enum(11)
   val state = RegInit(s_invalid)
   val out_valid = RegInit(false.B)
@@ -492,6 +492,9 @@ class AtomicsUnit(val param: ExeUnitParams)(implicit p: Parameters) extends XSMo
   io.dtlb.req.bits.checkfullva := true.B
   io.dtlb.resp.ready      := true.B
   io.dtlb.req.bits.cmd    := Mux(isLr, TlbCmd.atom_read, TlbCmd.atom_write)
+  if(HasShadowStack) {
+      io.dtlb.req.bits.shadowStackUser.get :=  LSUOpType.isShadowStackAmo(uop.fuOpType)
+  }
   io.dtlb.req.bits.debug.pc := uop.pc
   io.dtlb.req.bits.debug.robIdx := uop.robIdx
   io.dtlb.req.bits.debug.isFirstIssue := false.B

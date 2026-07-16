@@ -227,6 +227,11 @@ class NewCSR(implicit val p: Parameters) extends Module
         val hstatus = UInt(2.W)
         val senvcfg = UInt(2.W)
       }
+      val SSEVec = new Bundle {
+        val menvcfgSSE = Bool()
+        val henvcfgSSE = Bool()
+        val senvcfgSSE = Bool()
+      }
     })
 
     val toDecode = new CSRToDecode
@@ -1552,6 +1557,9 @@ class NewCSR(implicit val p: Parameters) extends Module
   io.tlb.pmm.henvcfg := RegNext(henvcfg.regOut.PMM.asUInt)
   io.tlb.pmm.hstatus := RegNext(hstatus.regOut.HUPMM.asUInt)
   io.tlb.pmm.senvcfg := RegNext(senvcfg.regOut.PMM.asUInt)
+  io.tlb.SSEVec.menvcfgSSE := (if (HasShadowStack) RegNext(menvcfg.regOut.SSE.asUInt) else DontCare)
+  io.tlb.SSEVec.henvcfgSSE := (if (HasShadowStack) RegNext(henvcfg.regOut.SSE.asUInt) else DontCare)
+  io.tlb.SSEVec.senvcfgSSE := (if (HasShadowStack) RegNext(senvcfg.regOut.SSE.asUInt) else DontCare)
 
   io.toDecode.illegalInst.mfence.foreach(_ := !isModeM)
 

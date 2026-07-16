@@ -228,6 +228,9 @@ class StoreUnitS0(param: ExeUnitParams)(
   io.tlbReq.bits.hyperinst := LSUOpType.isHsv(uop.fuOpType)
   io.tlbReq.bits.hlvx := false.B
   io.tlbReq.bits.isPrefetch := isHwPrefetch
+  if(HasShadowStack) {
+    io.tlbReq.bits.shadowStackUser.get := LSUOpType.isShadowStackStore(uop.fuOpType)
+  }
   io.tlbReq.bits.size := sink.bits.size
   io.tlbReq.bits.kill := false.B
   io.tlbReq.bits.memidx.is_ld := false.B

@@ -426,6 +426,9 @@ class LoadUnitS0(param: ExeUnitParams)(
   io.tlbReq.bits.memidx.is_st := false.B
   io.tlbReq.bits.memidx.idx := uop.lqIdx.value
   io.tlbReq.bits.isPrefetch := isPrefetch
+  if(HasShadowStack) {
+    io.tlbReq.bits.shadowStackUser.get := LSUOpType.isShadowStackLoad(uop.fuOpType)
+  }
   io.tlbReq.bits.no_translate := noQuery
   io.tlbReq.bits.pmp_addr := DontCare // TODO: move this outside of TlbReq
   io.tlbReq.bits.debug.pc := uop.pc
@@ -597,11 +600,11 @@ class LoadUnitS1(param: ExeUnitParams)(
   val redirectNextNext = Wire(redirect.cloneType)
   redirectNextNext.valid := GatedValidRegNext(redirectNext.valid)
   redirectNextNext.bits := RegEnable(redirectNext.bits, redirectNext.valid)
-  
+
   val isUnalignTail = LoadEntrance.isUnalignTail(entrance)
 
   val kill = !pipeIn.valid || io.kill || isSwInstrPrefetch ||
-             robIdx.needFlush(redirect) || robIdx.needFlush(redirectNext) || 
+             robIdx.needFlush(redirect) || robIdx.needFlush(redirectNext) ||
              (robIdx.needFlush(redirectNextNext) && isUnalignTail)
 
   /**

@@ -299,6 +299,11 @@ class CSR(cfg: FuConfig)(implicit p: Parameters) extends FuncUnit(cfg)
 
   // pointer masking extension
   tlb.pmm := csrMod.io.tlb.pmm
+  if (HasShadowStack) {
+    tlb.SSEVec := csrMod.io.tlb.SSEVec
+  } else {
+    tlb.SSEVec := DontCare
+  }
 
   /** Since some CSR read instructions are allowed to be pipelined, ready/valid signals should be modified */
   io.in.ready := csrMod.io.in.ready // Todo: Async read imsic may block CSR
@@ -428,7 +433,7 @@ class CSRInput(implicit p: Parameters) extends XSBundle with HasSoCParameter {
 
 class CSRToDecode(implicit p: Parameters) extends XSBundle {
   val illegalInst = new Bundle {
-    
+
     val mfence = Option.when(HasMptCheck) (Bool())
     /**
      * illegal sfence.vma, sinval.vma

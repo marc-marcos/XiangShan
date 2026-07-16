@@ -222,15 +222,15 @@ class HistoryTable()(implicit p: Parameters) extends BertiModule {
     * for prefetched cache lines (Hitp in Figure 5). The virtual address (VA) and
     * the IP (IP, VA arrow in Figure 5) are stored in the new entry along with
     * the current timestamp (not shown in the figure)
-    * 
+    *
     * understand:
     *   1. tag match
     *   2. FIFO queue (here used)
-    * 
+    *
     * // TODO lyq:
     *   How to support multi port of access for both historyTable and deltaTable.
     *   Maybe hard due to set division.
-    * 
+    *
     */
   def accessPLRU(pc: UInt, vaddr: UInt): Bool = {
     // ensure option exists in this code path
@@ -384,11 +384,11 @@ class DeltaTable()(implicit p: Parameters) extends BertiModule {
   val stat_update_evictDelta = WireInit(0.S(DeltaWidth.W)) // TODO lyq: have no idea how to output this
   val stat_prefetch_isEntryHit = WireInit(false.B)
   /*** built-in function */
-  // def thresholdOfReset: UInt = 16.U 
-  // def thresholdOfUpdate: UInt = 10.U 
-  // def thresholdOfL1PF: UInt = 8.U 
-  // def thresholdOfL2PF: UInt = 5.U 
-  // def thresholdOfL2PFR: UInt = 2.U 
+  // def thresholdOfReset: UInt = 16.U
+  // def thresholdOfUpdate: UInt = 10.U
+  // def thresholdOfL1PF: UInt = 8.U
+  // def thresholdOfL2PF: UInt = 5.U
+  // def thresholdOfL2PFR: UInt = 2.U
   val thresholdOfReset = Constantin.createRecord(_name+"_thresholdOfReset", 6)    // (1 << DtCntWidth) - 1
   val thresholdOfUpdate = Constantin.createRecord(_name+"_thresholdOfUpdate", 2)  // (1 << (DtCntWidth - 1))
   val thresholdOfL1PF = Constantin.createRecord(_name+"_thresholdOfL1PF", 4)      // ((1 << DtCntWidth) * 0.65).toInt
@@ -565,7 +565,7 @@ class DeltaTable()(implicit p: Parameters) extends BertiModule {
     *   10-bit IP tag
     *   4-bit counter
     *   an array of 16 deltas (13-bit delta, 4-bit coverage, 2-bit status)
-    * 
+    *
     */
   val entries = Reg(Vec(DtWaySize, new DeltaEntry()))
   val valids = RegInit(0.U.asTypeOf(Vec(DtWaySize, Bool())))
@@ -611,7 +611,7 @@ class DeltaTable()(implicit p: Parameters) extends BertiModule {
         val way = OHToUInt(matchOH)
         replacer.access(way)
         deltaInfo := entries(way).deltaList(entries(way).bestDeltaIdx)
-        
+
         when(deltaInfo.status =/= DeltaStatus.NO_PREF){
           res.valid := train.valid
           res.bits.triggerPC := train.bits.pc
@@ -650,7 +650,7 @@ class DeltaTable()(implicit p: Parameters) extends BertiModule {
   deltaInfo2Db.status := pfRes._2.status.asUInt
   val prefetchDeltaTable = ChiselDB.createTable("berti_prefetchDeltaTable" + p(XSCoreParamsKey).HartId.toString, new DeltaInfo2Db, basicDB = false)
   prefetchDeltaTable.log(data = deltaInfo2Db, en = io.prefetch.valid, clock = clock, reset = reset)
-  
+
   XSPerfAccumulate("learn_req", io.learn.valid)
   XSPerfAccumulate("learn_req_0", io.learn.valid && io.learn.delta === 0.S)
   XSPerfAccumulate("learn_req_non_0", io.learn.valid && io.learn.delta =/= 0.S)
@@ -733,7 +733,7 @@ class DeltaPrefetchBuffer(size: Int, name: String)(implicit p: Parameters) exten
   val replacer = ReplacementPolicy.fromString("plru", size)
   val tlbReqArb = Module(new RRArbiterInit(new TlbReq, size))
   val pfIdxArb = Module(new RRArbiterInit(UInt(BufferIndexWidth.W), size))
-  
+
   /*** io default */
   io.l1_req.valid := false.B
   io.l1_req.bits := DontCare
@@ -809,6 +809,9 @@ class DeltaPrefetchBuffer(size: Int, name: String)(implicit p: Parameters) exten
     tlbReqArb.io.in(i).bits.vaddr := entries(i).getPrefetchVA
     tlbReqArb.io.in(i).bits.cmd := TlbCmd.read
     tlbReqArb.io.in(i).bits.isPrefetch := true.B
+    if(HasShadowStack) {
+      tlbReqArb.io.in(i).bits.shadowStackUser.get := false.B
+    }
     tlbReqArb.io.in(i).bits.size := 3.U
     tlbReqArb.io.in(i).bits.kill := false.B
     tlbReqArb.io.in(i).bits.no_translate := false.B
@@ -870,7 +873,7 @@ class DeltaPrefetchBuffer(size: Int, name: String)(implicit p: Parameters) exten
   /******************************************************************
    * prefetch
    *  p0: arbiter and send pf req
-   * 
+   *
    * TODO: prefetch may not ready, how about setting replay counter?
    ******************************************************************/
   for(i <- 0 until size){
@@ -909,7 +912,7 @@ class DeltaPrefetchBuffer(size: Int, name: String)(implicit p: Parameters) exten
   XSPerfAccumulate("pf_l1_req", io.l1_req.fire)
   XSPerfAccumulate("pf_l2_req", io.l2_req.fire)
   XSPerfAccumulate("pf_l3_req", io.l3_req.fire)
-  
+
   /*** performance counter and debug */
   val srcTable = ChiselDB.createTable(
     "berti_source_pf_req" + p(XSCoreParamsKey).HartId.toString,

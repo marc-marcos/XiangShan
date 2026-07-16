@@ -753,6 +753,15 @@ package object xiangshan {
 
     def isPrefetch(op: UInt): Bool = op(3) && (op(5, 4) === "b000".U) && (op(8, 7) === "b00".U)
 
+    // Zicfiss shadow stack load/store/amo.
+    // Keep size in bit(1, 0), same as normal LSU ops.
+    def sspread   = "b110011".U
+    def sspush     = "b110111".U
+    def ssamoswap  = "b111011".U
+    def isShadowStackLoad(op: UInt): Bool = op === sspread
+    def isShadowStackStore(op: UInt): Bool = op === sspush
+    def isShadowStackAmo(op: UInt): Bool = op === ssamoswap
+
     // store pipeline
     // normal store
     // bit encoding: | store 00 | size(2bit) |

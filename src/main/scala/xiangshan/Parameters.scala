@@ -53,6 +53,7 @@ case class XSCoreParameters
   VLEN: Int = 128,
   ELEN: Int = 64,
   HSXLEN: Int = 64,
+  HasShadowStack: Boolean = true,
   HasMptCheck: Boolean = false, //enable mpt
   HasMptCheckDefault: Boolean = false, // hardwired testing code: fake 2M MPT table
   HasMptCheckDefault4k: Boolean = false, // hardwired testing code: fake 4k MPT table
@@ -573,6 +574,7 @@ trait HasXSParameter {
   def hartIdLen = p(MaxHartIdBits)
   val xLen = XLEN
   assert(!(HasMptCheck == true && HasBitmapCheck == true), "Conflicts: MPT and Bitmap can't be used together")
+  def HasShadowStack = coreParams.HasShadowStack
   def HasMptCheck = coreParams.HasMptCheck && !coreParams.HasBitmapCheck
   def HasMptCheckDefault = coreParams.HasMptCheckDefault
   def HasMptCheckDefault4k = coreParams.HasMptCheckDefault4k
