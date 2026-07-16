@@ -625,6 +625,7 @@ object Exu {
       toRob.pdest         := 0.U
       toRob.vecWen        .foreach(_ := false.B)
       toRob.v0Wen         .foreach(_ := false.B)
+      toRob.entryIdx      .foreach(_ := 0.U)
       toRob.debug                    := this.debug.map(_.debug).getOrElse(0.U.asTypeOf(toRob.debug))
       toRob.perfDebugInfo .foreach(_ := this.debug.get.perfDebugInfo)
       toRob.debug_seqNum  .foreach(_ := this.debug.get.seqNum)

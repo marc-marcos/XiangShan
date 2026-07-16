@@ -181,6 +181,11 @@ class Dispatch(implicit p: Parameters) extends XSModule with HasPerfEvents {
     fromRenameUpdate(i).bits.srcStateVl := 0.U // dontCare this
     fromRenameUpdate(i).bits.waitForRobIdx := 0.U.asTypeOf(fromRenameUpdate(i).bits.waitForRobIdx)
     connectSamePort(fromRenameUpdate(i).bits, fromRename(i).bits)
+    fromRenameUpdate(i).bits.vagqPsrc2 := Mux(
+      fromRename(i).bits.useVAGQ,
+      fromRename(i).bits.psrc(2)(VfPhyRegIdxWidth - 1, 0),
+      0.U
+    )
     fromRenameUpdate(i).bits.debug.foreach(connectSamePort(_, fromRename(i).bits.debug.get))
     fromRenameUpdate(i).bits.ftqOffset := fromRename(i).bits.ftqLastOffset
     fromRenameUpdate(i).bits.ftqPtr := fromRename(i).bits.ftqPtr + fromRename(i).bits.crossFtq

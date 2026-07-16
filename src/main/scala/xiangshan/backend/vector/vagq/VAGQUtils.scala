@@ -183,7 +183,6 @@ trait HasVAGQHelper extends HasCircularQueuePtrHelper { this: HasVAGQParameters 
     data.entryIdx := source.vagqEntryIdx.get
     data.robIdx := source.robIdx
     data.op2Data := fitUInt(source.src(0), VLEN)
-    data.psrc2 := 0.U // Todo
     data
   }
 
@@ -193,7 +192,6 @@ trait HasVAGQHelper extends HasCircularQueuePtrHelper { this: HasVAGQParameters 
     data.entryIdx := source.ctrl.vagqEntryIdx.get
     data.robIdx := source.ctrl.robIdx
     data.op2Data := fitUInt(source.data.src(0), VLEN)
-    data.psrc2 := 0.U // Todo
     data
   }
 
@@ -224,6 +222,7 @@ trait HasVAGQHelper extends HasCircularQueuePtrHelper { this: HasVAGQParameters 
     )
     addr.robIdx := source.robIdx
     addr.pdest := fitUInt(source.toRF.pdest, addr.pdest.getWidth)
+    addr.psrc2 := source.vagqPsrc2.get
     addr.baseAddr := source.data.src(0)(XLEN - 1, 0)
     addr.uvlByte := uopByteRangeLen(source.data.vl.get, deew, vpu.vuopIdx)
     addr.vstart := fitUInt(vpu.vstart, addr.vstart.getWidth)

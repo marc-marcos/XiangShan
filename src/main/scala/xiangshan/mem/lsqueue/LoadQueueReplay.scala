@@ -605,6 +605,7 @@ class LoadQueueReplay(implicit p: Parameters) extends XSModule
     replay_req(i).bits.vecBaseVaddr.get := DontCare
     replay_req(i).bits.vecVaddrOffset.get := DontCare
     replay_req(i).bits.vecTriggerMask.get := DontCare
+    replay_req(i).bits.DontCareVAGQFields()
     replay_req(i).bits.hasROBEntry := true.B
     replay_req(i).bits.missDbUpdated := s2_missDbUpdated
 

@@ -50,8 +50,13 @@ trait HasVAGQParameters extends HasXSParameter {
   def vagqUvlByteWidth: Int = UvlByteWidth
   def vagqUopIdxWidth: Int = UopIdxWidth
 
-  require(VLEN == 128, s"VAGQ currently assumes VLEN=128, got VLEN=$VLEN")
-  require(VDataBytes == FlowBytes, s"VAGQ FlowBytes must match VDataBytes, got $FlowBytes and $VDataBytes")
+  private val configuredVlen = coreParams.VLEN
+  private val configuredVDataBytes = configuredVlen / 8
+  require(configuredVlen == 128, s"VAGQ currently assumes VLEN=128, got VLEN=$configuredVlen")
+  require(
+    configuredVDataBytes == FlowBytes,
+    s"VAGQ FlowBytes must match VDataBytes, got $FlowBytes and $configuredVDataBytes"
+  )
   require(vagqSize == 4 || vagqSize == 8, s"VAGQSize must be 4 or 8, got $vagqSize")
 }
 
@@ -77,6 +82,7 @@ class VAGQAddrSideUop(implicit p: Parameters) extends VAGQBundle {
   val uopType = UInt(3.W)
   val robIdx = new RobPtr
   val pdest = UInt(VfPhyRegIdxWidth.W)
+  val psrc2 = UInt(VfPhyRegIdxWidth.W)
   val baseAddr = UInt(XLEN.W)
   val uvlByte = UInt(5.W)
   val vstart = UInt((CSRConfig.VlWidth-1).W)
@@ -95,7 +101,6 @@ class VAGQDataSideUop(implicit p: Parameters) extends VAGQBundle {
   val entryIdx = UInt(vagqEntryIdxWidth.W)
   val robIdx = new RobPtr
   val op2Data = UInt(VLEN.W)
-  val psrc2 = UInt(VfPhyRegIdxWidth.W)
 }
 
 class VAGQLsuReq(implicit p: Parameters) extends VAGQBundle {

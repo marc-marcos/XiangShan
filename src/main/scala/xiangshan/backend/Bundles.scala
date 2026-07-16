@@ -64,7 +64,8 @@ object Bundles {
     connectSamePort(sink.bits.data, source.bits)
     connectSamePort(sink.bits.toRF, source.bits)
     connectSamePort(sink.bits, source.bits)
-    sink.bits.robIdx     := source.bits.robIdx
+    sink.bits.robIdx := source.bits.robIdx
+    sink.bits.vagqPsrc2.foreach(_ := source.bits.vagqPsrc2.getOrElse(0.U))
   }
 
   def connectExuInput(sink: DecoupledIO[ExuInput], source: DecoupledIO[NewExuInput]) = {
@@ -75,6 +76,7 @@ object Bundles {
     connectSamePort(sink.bits, source.bits.toRF)
     connectSamePort(sink.bits, source.bits)
     sink.bits.sqIdx.foreach(_ := source.bits.sqIdx.get)
+    sink.bits.vagqPsrc2.foreach(_ := source.bits.vagqPsrc2.getOrElse(0.U))
     sink.bits.robIdx := source.bits.robIdx
     sink.bits.selImm := 0.U
   }
@@ -103,6 +105,7 @@ object Bundles {
     sink.data              := source.toIntRf.map(_.bits).getOrElse(0.U(64.W))
     sink.vecWen. foreach(_ := source.toVecRf.map(_.valid).getOrElse(false.B))
     sink.v0Wen.  foreach(_ := source.toV0Rf.map(_.valid).getOrElse(false.B))
+    sink.entryIdx.foreach(_ := 0.U)
   }
 
   // Frontend --[CtrlBlock]--> DecodeInUop
@@ -379,6 +382,7 @@ object Bundles {
     val latency = Latency()
     // from rename
     val psrc = Vec(numSrc, UInt(PhyRegIdxWidth.W))
+    val vagqPsrc2 = UInt(VfPhyRegIdxWidth.W)
     val psrcV0 = UInt(V0PhyRegIdxWidth.W)
     val psrcVl = UInt(VlPhyRegIdxWidth.W)
     val pdest = UInt(PhyRegIdxWidth.W)
@@ -447,12 +451,13 @@ object Bundles {
     val oldVType = Option.when(params.writeVType)(VType())
     val vtype    = Option.when(params.readVlRf)(VType())
     val fflagsWen  = Option.when(params.writeFflags)(Bool())
-    val uopIdx   = Option.when(params.inVfSchd || params.isMemAddrIQ)(UopIdx())
+    val uopIdx   = Option.when(params.inVfSchd || params.isMemAddrIQ || params.needVoQ)(UopIdx())
     val lastUop  = Option.when(params.inVfSchd || params.isMemAddrIQ)(Bool())
     val latency  = Latency()
     // from rename
     val robIdx    = new RobPtr
     val psrc      = Vec(numSrc, UInt(PhyRegIdxWidth.W))
+    val vagqPsrc2 = Option.when(params.isStAddrIQ)(UInt(VfPhyRegIdxWidth.W))
     val psrcV0    = Option.when(params.readV0Rf)(UInt(V0PhyRegIdxWidth.W))
     val psrcVl    = Option.when(params.readVlRf)(UInt(VlPhyRegIdxWidth.W))
     val pdest     = UInt(PhyRegIdxWidth.W)
@@ -496,9 +501,10 @@ object Bundles {
     val oldVType = Option.when(params.writeVType)(VType())
     val vtype    = Option.when(params.readVlRf)(VType())
     val fflagsWen = Option.when(params.writeFflags)(Bool())
-    val uopIdx   = Option.when(params.inVfSchd || params.isMemAddrIQ)(UopIdx())
+    val uopIdx   = Option.when(params.inVfSchd || params.isMemAddrIQ || params.needVoQ)(UopIdx())
     val lastUop  = Option.when(params.inVfSchd || params.isMemAddrIQ)(Bool())
     // from rename
+    val vagqPsrc2 = Option.when(params.isStAddrIQ)(UInt(VfPhyRegIdxWidth.W))
     val numLsElem = Option.when(params.isVecMemIQ)(NumLsElem())
     val rasAction = Option.when(params.needRasAction)(BranchAttribute.RasAction())
     // for mdp
@@ -525,10 +531,13 @@ object Bundles {
     val frm      = Option.when(params.needSrcFrm)(Frm())
     val vpu      = Option.when(params.issueBlockParam.inVfSchd)(new VPUCtrlSignals)
     val fflagsWen = Option.when(params.writeFflags)(Bool())
-    val uopIdx   = Option.when(params.issueBlockParam.inVfSchd || params.issueBlockParam.isMemAddrIQ)(UopIdx())
+    val uopIdx   = Option.when(
+      params.issueBlockParam.inVfSchd || params.issueBlockParam.isMemAddrIQ || params.issueBlockParam.needVoQ
+    )(UopIdx())
     val lastUop  = Option.when(params.issueBlockParam.inVfSchd || params.issueBlockParam.isMemAddrIQ)(Bool())
     // from rename
     val numLsElem = Option.when(params.issueBlockParam.isVecMemIQ)(NumLsElem())
+    val vagqPsrc2 = Option.when(params.issueBlockParam.isStAddrIQ)(UInt(VfPhyRegIdxWidth.W))
     val rasAction = Option.when(params.needRasAction)(BranchAttribute.RasAction())
     // psrc are used in datapath to generate regfile's bank Ren
     val psrc      = Vec(params.numRegSrc, UInt(params.rdPregIdxWidth.W))
@@ -1019,6 +1028,7 @@ object Bundles {
     val lqIdx          = Option.when(iqParams.needLqIdx)(new LqPtr)
     val sqIdx          = Option.when(iqParams.needSqIdx)(new SqPtr)
     val vagqEntryIdx   = Option.when(iqParams.needVoQ)(UInt(log2Ceil(VecOrderQueue.VAGQSize).W))
+    val vagqPsrc2      = Option.when(iqParams.isStAddrIQ)(UInt(VfPhyRegIdxWidth.W))
 
     val src = Vec(exuParams.numRegSrc, UInt(exuParams.srcDataBitsMax.W))
     val v0  = Option.when(exuParams.readV0Rf)(V0())
@@ -1077,6 +1087,7 @@ object Bundles {
       this.vtype.foreach(_ := 0.U.asTypeOf(VType()))
       this.fflagsWen.foreach(_ := false.B)
       this.numLsElem.foreach(_ := 0.U.asTypeOf(NumLsElem()))
+      this.vagqPsrc2.foreach(_ := 0.U)
       this.rasAction.foreach(_ := 0.U)
       this.storeSetHit.foreach(_ := false.B)
       this.waitForRobIdx.foreach(_ := 0.U.asTypeOf(new RobPtr))
@@ -1106,6 +1117,7 @@ object Bundles {
       this.fflagsWen.foreach(_ := source.fflagsWen.get)
 
       this.numLsElem.foreach(_ := source.numLsElem.get)
+      this.vagqPsrc2.foreach(_ := source.vagqPsrc2.get)
       this.rasAction.foreach(_ := source.rasAction.get)
 
       this.storeSetHit.foreach(_ := source.storeSetHit.get)
@@ -1241,6 +1253,7 @@ object Bundles {
     val lqIdx = OptionWrapper(params.hasLoadFu || params.hasStoreAddrFu || params.hasVecLsFu, new LqPtr)
     val sqIdx = OptionWrapper(params.hasLoadFu || params.hasStoreAddrFu || params.hasStdFu || params.hasVecLsFu || params.hasVStdFu, new SqPtr)
     val vagqEntryIdx = Option.when(params.issueBlockParam.needVoQ)(UInt(log2Ceil(VecOrderQueue.VAGQSize).W))
+    val vagqPsrc2 = Option.when(params.issueBlockParam.isStAddrIQ)(UInt(VfPhyRegIdxWidth.W))
     val dataSources = Vec(params.numRegSrc, DataSource())
     val exuSources = OptionWrapper(params.isIQWakeUpSink, Vec(params.numRegSrc, ExuSource(params)))
     val loadDependency = OptionWrapper(params.needLoadDependency, Vec(LoadPipelineWidth, UInt(LoadDependencyWidth.W)))
@@ -1282,6 +1295,7 @@ object Bundles {
       this.ssid          .foreach(_ := source.ssid.get)
       this.lqIdx         .foreach(_ := source.lqIdx.get)
       this.sqIdx         .foreach(_ := source.sqIdx.get)
+      this.vagqPsrc2     .foreach(_ := source.vagqPsrc2.get)
     }
 
     def toDynInst(): DynInst = {
@@ -1396,6 +1410,7 @@ object Bundles {
     val lqIdx          = Option.when(params.hasLoadExu || params.hasStoreAddrExu || params.hasVecLsFu)(new LqPtr)
     val sqIdx          = Option.when(params.hasLoadExu || params.hasStoreAddrFu || params.hasStdFu || params.hasVecLsFu || params.hasVStdFu)(new SqPtr)
     val vagqEntryIdx   = Option.when(params.issueBlockParam.needVoQ)(UInt(log2Ceil(VecOrderQueue.VAGQSize).W))
+    val vagqPsrc2      = Option.when(params.issueBlockParam.isStAddrIQ)(UInt(VfPhyRegIdxWidth.W))
     val perfDebugInfo  = Option.when(backendParams.debugEn)(new PerfDebugInfo())
     val debug_seqNum   = Option.when(backendParams.debugEn)(InstSeqNum())
   }
