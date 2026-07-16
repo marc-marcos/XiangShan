@@ -50,8 +50,18 @@ class MainBtb(implicit p: Parameters) extends BasePredictor with HasMainBtbParam
   /* *** submodules *** */
   private val alignBanks = Seq.tabulate(NumAlignBanks)(alignIdx => Module(new MainBtbAlignBank(alignIdx)))
 
+  alignBanks.foreach { b =>
+    b.io.contextFlush := io.contextFlush
+    b.io.bpuFlushing  := io.bpuFlushing
+  }
+
   io.sramResetDone := alignBanks.map(_.io.sramResetDone).reduce(_ && _)
-  io.resetDone     := true.B
+
+  private val flushPending = RegInit(false.B)
+  when(io.contextFlush)(flushPending := true.B)
+    .elsewhen(flushPending && io.sramResetDone)(flushPending := false.B)
+
+  io.resetDone := !flushPending && !io.contextFlush
 
   io.trainReady := true.B
 
@@ -143,6 +153,11 @@ class MainBtb(implicit p: Parameters) extends BasePredictor with HasMainBtbParam
    */
   private val t1_fire  = RegNext(t0_fire, init = false.B) && io.enable
   private val t1_train = RegEnable(t0_train, t0_fire)
+
+  // context switch window: zero t1_train so stale/new training cannot flow downstream (last-connect)
+  when(io.bpuFlushing) {
+    t1_train := 0.U.asTypeOf(t1_train)
+  }
 
   private val t1_rotator    = RegEnable(t0_rotator, t0_fire)
   private val t1_startPcVec = RegEnable(t0_startPcVec, t0_fire)
