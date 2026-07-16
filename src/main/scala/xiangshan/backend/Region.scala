@@ -558,21 +558,20 @@ class Region(val params: SchdBlockParams)(implicit p: Parameters)
       for (j <- toMem(i).indices) {
         val toMemExuInput = bypassNetwork.io.toExus.int(firstMemExu + i)(j)
         val shouldLdCancel = LoadShouldCancel(toMemExuInput.bits.ctrl.loadDependency, io.ldCancel)
-        toMemExuInput.ready := true.B
         val toMemValidAfterCancel = toMemExuInput.valid && !(toMemExuInput.bits.robIdx.needFlush(flushCopyRegVec.last) || shouldLdCancel)
-        toMem(i)(j).valid := RegNext(toMemValidAfterCancel)
-        toMem(i)(j).bits := RegNext(toMemExuInput.bits)
-        if (toMem(i)(j).bits.params.hasLoadFu){
+        val toMemValidBeforeVagq = if (toMem(i)(j).bits.params.hasLoadFu) {
           toMemExuInput.ready := toMem(i)(j).ready
           val toMemValidReg = RegInit(Bool(), false.B)
           toMemValidReg := toMemValidAfterCancel && (!toMemValidReg || toMem(i)(j).fire) ||
                            toMemValidReg && !toMem(i)(j).fire && !toMem(i)(j).bits.robIdx.needFlush(flushCopyRegVec.last)
-          toMem(i)(j).valid := toMemValidReg
-          toMem(i)(j).bits := RegEnable(toMemExuInput.bits, toMemValidAfterCancel && (!toMem(i)(j).valid || toMem(i)(j).fire))
+          toMem(i)(j).bits := RegEnable(toMemExuInput.bits, toMemValidAfterCancel && (!toMemValidReg || toMem(i)(j).fire))
+          toMemValidReg
+        } else {
+          toMemExuInput.ready := true.B
+          toMem(i)(j).bits := RegNext(toMemExuInput.bits)
+          RegNext(toMemValidAfterCancel)
         }
         val thisIQ = issueQueues.filter(x => x.param.allExuParams.contains(toMem(i)(j).bits.params)).head
-        val toMemValidBeforeVagq = Wire(Bool())
-        toMemValidBeforeVagq := toMem(i)(j).valid
         val canBuildVagqAddr = toMem(i)(j).bits.params.needVPUCtrl &&
           toMem(i)(j).bits.params.readV0Rf &&
           toMem(i)(j).bits.params.readVlRf
