@@ -23,7 +23,8 @@ class ReplacerState(
     NumSets:           Int,
     StateBits:         Int,
     NumExtraReadPort:  Int = 0,
-    NumExtraWritePort: Int = 0
+    NumExtraWritePort: Int = 0,
+    hasContextFlush:   Boolean = false
 ) extends Module {
   class ReplacerStateIO extends Bundle {
     class Read extends Bundle {
@@ -40,6 +41,8 @@ class ReplacerState(
     val read:  Vec[Read]         = Vec(2 + NumExtraReadPort, new Read)
     val write: Vec[Valid[Write]] = Vec(2 + NumExtraWritePort, Flipped(Valid(new Write)))
 
+    val contextFlush: Option[Bool] = Option.when(hasContextFlush)(Input(Bool()))
+
     def predictRead: Read      = read.head
     def trainRead:   Read      = read.last
     def extraRead:   Seq[Read] = read.init.tail
@@ -55,6 +58,8 @@ class ReplacerState(
 
   val io: ReplacerStateIO = IO(new ReplacerStateIO)
 
+  private val contextFlush = io.contextFlush.getOrElse(false.B)
+
   private val states = RegInit(VecInit(Seq.fill(NumSets)(0.U.asTypeOf(UInt(StateBits.W)))))
 
   /* *** write *** */
@@ -66,6 +71,11 @@ class ReplacerState(
     when(port.valid) {
       states(port.bits.setIdx) := port.bits.state
     }
+  }
+
+  // last-connect: contextFlush forces all PLRU states to zero, overriding normal writes
+  when(contextFlush) {
+    states.foreach(_ := 0.U)
   }
 
   /* *** read *** */

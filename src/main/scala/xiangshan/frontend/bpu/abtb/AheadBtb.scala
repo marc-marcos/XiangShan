@@ -52,8 +52,19 @@ class AheadBtb(implicit p: Parameters) extends BasePredictor with Helpers {
   private val banks     = Seq.tabulate(NumBanks)(i => Module(new AheadBtbBank(i)))
   private val replacers = Seq.fill(NumBanks)(Module(new AheadBtbReplacer))
 
+  banks.foreach { b =>
+    b.io.contextFlush := io.contextFlush
+    b.io.bpuFlushing  := io.bpuFlushing
+  }
+  replacers.foreach(r => r.io.contextFlush := io.contextFlush)
+
   io.sramResetDone := banks.map(_.io.sramResetDone).reduce(_ && _)
-  io.resetDone     := true.B
+
+  private val flushPending = RegInit(false.B)
+  when(io.contextFlush)(flushPending := true.B)
+    .elsewhen(flushPending && io.sramResetDone)(flushPending := false.B)
+
+  io.resetDone := !flushPending && !io.contextFlush
 
   io.trainReady := true.B
 
@@ -116,7 +127,7 @@ class AheadBtb(implicit p: Parameters) extends BasePredictor with Helpers {
   private val s0_bankMask   = UIntToOH(s0_bankIdx)
 
   banks.zipWithIndex.foreach { case (b, i) =>
-    b.io.readReq.valid       := predictReqValid && s0_bankMask(i)
+    b.io.readReq.valid       := predictReqValid && s0_bankMask(i) && !io.bpuFlushing
     b.io.readReq.bits.setIdx := s0_setIdx
   }
 
@@ -132,8 +143,13 @@ class AheadBtb(implicit p: Parameters) extends BasePredictor with Helpers {
   private val s1_bankIdx  = RegEnable(s0_bankIdx, s0_fire)
   private val s1_bankMask = RegEnable(s0_bankMask, s0_fire)
 
-  private val s1_entries    = Mux1H(s1_bankMask, banks.map(_.io.readResp.entries))
-  private val s1_ctrVec     = takenCounter(s1_bankIdx)(s1_setIdx)
+  private val s1_entries = Mux(
+    io.bpuFlushing,
+    0.U.asTypeOf(Vec(NumWays, new AheadBtbEntry)),
+    Mux1H(s1_bankMask, banks.map(_.io.readResp.entries))
+  )
+  private val s1_ctrVec =
+    Mux(io.bpuFlushing, VecInit.fill(NumWays)(TakenCounter.Zero), takenCounter(s1_bankIdx)(s1_setIdx))
   private val s1_ctrResult  = VecInit(s1_ctrVec.map(_.isPositive))
   private val s1_strongBias = VecInit(s1_ctrVec.map(_.isSaturate))
   /* --------------------------------------------------------------------------------------------------------------
@@ -174,6 +190,25 @@ class AheadBtb(implicit p: Parameters) extends BasePredictor with Helpers {
     s3_startPc    := s2_startPc
     s3_ctrResult  := s2_ctrResult
     s3_strongBias := s2_strongBias
+  }
+
+  // context switch: clear s2/s3 pipeline registers (last-connect, takes effect next cycle)
+  when(io.contextFlush) {
+    s2_setIdx     := 0.U
+    s2_bankIdx    := 0.U
+    s2_bankMask   := 0.U
+    s2_entries    := 0.U.asTypeOf(s2_entries)
+    s2_hitMask    := 0.U.asTypeOf(s2_hitMask)
+    s2_startPc    := 0.U.asTypeOf(s2_startPc)
+    s2_ctrResult  := 0.U.asTypeOf(s2_ctrResult)
+    s2_strongBias := 0.U.asTypeOf(s2_strongBias)
+    s3_setIdx     := 0.U
+    s3_bankIdx    := 0.U
+    s3_bankMask   := 0.U
+    s3_entries    := 0.U.asTypeOf(s3_entries)
+    s3_startPc    := 0.U.asTypeOf(s3_startPc)
+    s3_ctrResult  := 0.U.asTypeOf(s3_ctrResult)
+    s3_strongBias := 0.U.asTypeOf(s3_strongBias)
   }
 
   // private val s2_tag = getTag(s2_startPc)
@@ -239,7 +274,7 @@ class AheadBtb(implicit p: Parameters) extends BasePredictor with Helpers {
   io.debug_startPc := s2_startPc
 
   replacers.zipWithIndex.foreach { case (r, i) =>
-    r.io.readValid   := s2_valid && s2_hit && s2_bankMask(i)
+    r.io.readValid   := s2_valid && s2_hit && s2_bankMask(i) && !io.bpuFlushing
     r.io.readSetIdx  := s2_setIdx
     r.io.readWayMask := s2_hitMask
   }
@@ -261,6 +296,11 @@ class AheadBtb(implicit p: Parameters) extends BasePredictor with Helpers {
 
   private val t1_fire  = RegNext(t0_fire, init = false.B)
   private val t1_train = RegEnable(t0_train, t0_fire)
+
+  // context switch window: zero t1_train so stale/new training cannot flow downstream (last-connect)
+  when(io.bpuFlushing) {
+    t1_train := 0.U.asTypeOf(t1_train)
+  }
 
   private val t1_meta = t1_train.abtbMeta
 
@@ -354,7 +394,7 @@ class AheadBtb(implicit p: Parameters) extends BasePredictor with Helpers {
   }
 
   replacers.zip(banks).foreach { case (r, b) =>
-    r.io.writeValid  := b.io.writeResp.valid
+    r.io.writeValid  := b.io.writeResp.valid && !io.bpuFlushing
     r.io.writeSetIdx := b.io.writeResp.bits.setIdx
     r.io.writeWayIdx := b.io.writeResp.bits.wayIdx
   }

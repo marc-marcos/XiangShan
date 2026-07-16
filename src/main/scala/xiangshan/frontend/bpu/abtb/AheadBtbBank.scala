@@ -33,6 +33,8 @@ class AheadBtbBank(bandIdx: Int)(implicit p: Parameters) extends AheadBtbModule 
     val writeResp: Valid[BankWriteResp]     = Valid(new BankWriteResp)
 
     val sramResetDone: Bool = Output(Bool())
+    val contextFlush:  Bool = Input(Bool())
+    val bpuFlushing:   Bool = Input(Bool())
   }
   val io: BankIO = IO(new BankIO)
 
@@ -43,6 +45,7 @@ class AheadBtbBank(bandIdx: Int)(implicit p: Parameters) extends AheadBtbModule 
     waySplit = NumWays / 2,
     dataSplit = 1,
     shouldReset = true,
+    extraReset = true,
     singlePort = true,
     withClockGate = true,
     holdRead = true,
@@ -50,6 +53,7 @@ class AheadBtbBank(bandIdx: Int)(implicit p: Parameters) extends AheadBtbModule 
     hasSramCtl = hasSramCtl,
     suffix = Option("bpu_abtb")
   ))
+  sram.extra_reset.get := io.contextFlush
   /* --------------------------------------------------------------------------------------------------------------
      read
      -------------------------------------------------------------------------------------------------------------- */
@@ -75,14 +79,16 @@ class AheadBtbBank(bandIdx: Int)(implicit p: Parameters) extends AheadBtbModule 
     new BankWriteReq,
     WriteBufferSize,
     numPorts = 1,
+    hasContextFlush = true,
     nameSuffix = s"abtbBank$bandIdx"
   ))
+  writeBuffer.io.contextFlush.get := io.contextFlush
 
   // writeReq is a ValidIO, it means that the new request will be dropped if the buffer is full
-  writeBuffer.io.write.head.valid := io.writeReq.valid
+  writeBuffer.io.write.head.valid := io.writeReq.valid && !io.bpuFlushing
   writeBuffer.io.write.head.bits  := io.writeReq.bits
 
-  writeBuffer.io.read.head.ready := sram.io.w.req.ready && !io.readReq.valid
+  writeBuffer.io.read.head.ready := sram.io.w.req.ready && !io.readReq.valid && !io.bpuFlushing
 
   private val writeValid   = writeBuffer.io.read.head.valid && !io.readReq.valid
   private val writeEntry   = writeBuffer.io.read.head.bits.entry
