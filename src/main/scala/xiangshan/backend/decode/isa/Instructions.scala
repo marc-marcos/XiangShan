@@ -3118,8 +3118,8 @@ object Instructions {
       VAESEF_VV,
       VAESEM_VS,
       VAESEM_VV,
-      VAESKF1_VI,
-      VAESKF2_VI,
+//      VAESKF1_VI,
+//      VAESKF2_VI,
       VAESZ_VS,
     )
   }

@@ -1131,7 +1131,16 @@ object SplitTable {
       VCLMUL_VV -> dup(null, null, null, vclmul)(_.S1v),
       VCLMUL_VX -> dup(null, null, null, vclmul)(_.S2x),
       VCLMULH_VV -> dup(null, null, null, vclmulh)(_.S1v),
-      VCLMULH_VX -> dup(null, null, null, vclmulh)(_.S2x)
+      VCLMULH_VX -> dup(null, null, null, vclmulh)(_.S2x),
+      VAESZ_VS -> dup(null, null, vaesz, null)(_.S1v),
+      VAESDF_VS -> dup(null, null, vaesdf, null)(_.S1v),
+      VAESDF_VV -> dup(null, null, vaesdf, null)(_.S1v),
+      VAESDM_VS -> dup(null, null, vaesdm, null)(_.S1v),
+      VAESDM_VV -> dup(null, null, vaesdm, null)(_.S1v),
+      VAESEF_VS -> dup(null, null, vaesef, null)(_.S1v),
+      VAESEF_VV -> dup(null, null, vaesef, null)(_.S1v),
+      VAESEM_VS -> dup(null, null, vaesem, null)(_.S1v),
+      VAESEM_VV -> dup(null, null, vaesem, null)(_.S1v)
     )
 
     opi00Table ++ opi01Table ++ opi10Table ++ opi11Table ++

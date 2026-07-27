@@ -316,7 +316,7 @@ case class XSCoreParameters
     "zbb", "zbc", "zbkb", "zbkc", "zbkx", "zbs", "zcb", "zcmop", "zfa", "zfh", "zfhmin", "zic64b",
     "zicbom", "zicbop", "zicboz", "ziccamoa", "ziccif", "zicclsm", "ziccrse", "zicntr", "zicond",
     "zicsr", "zifencei", "zihintntl", "zihintpause", "zihpm", "zimop", "zkn", "zknd", "zkne", "zknh",
-    "zksed", "zksh", "zkt", "zvbb", "zvbc", "zvfh", "zvfhmin", "zvkt", "zvl128b", "zvl32b", "zvl64b"
+    "zksed", "zksh", "zkt", "zvbb", "zvbc", "zvfh", "zvfhmin", "zvkt", "zvkned", "zvl128b", "zvl32b", "zvl64b"
   )
 
   def vlWidth = log2Up(VLEN) + 1
