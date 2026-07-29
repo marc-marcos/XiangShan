@@ -3,7 +3,7 @@ package xiangshan.backend.vector.Decoder.DecodeFields.VecDecodeChannel
 import chisel3.util.BitPat
 import xiangshan.backend.decode.isa.Instructions._
 import xiangshan.backend.vector.Decoder.InstPattern.VecInstPattern.Category
-import xiangshan.backend.vector.Decoder.InstPattern.{VecArithInstPattern, VecConfigInstPattern, VecInstPattern, ScaMultUopInstPattern, VecMemInstPattern}
+import xiangshan.backend.vector.Decoder.InstPattern.{VecArithInstPattern, VecConfigInstPattern, VecCryptoInstPattern, VecInstPattern, ScaMultUopInstPattern, VecMemInstPattern}
 import xiangshan.backend.vector.Decoder.util.BoolDecodeField
 import xiangshan.backend.vector.util.ScalaTypeExt.BooleanToExt
 import xiangshan.macros.InstanceNameMacro.{getVariableName, getVariableNameSeq}
@@ -13,6 +13,9 @@ object ImmIsUnsign5b extends BoolDecodeField[VecInstPattern] {
 
   override def genTable(op: VecInstPattern): BitPat = {
     op match {
+      case vci: VecCryptoInstPattern => (
+        uimmInst.contains(vci.name)
+      ).toBitPat
       case vai: VecArithInstPattern => (
         vai.category.rawString == Category.OPIVI.str &&
         uimmInst.contains(vai.name)
@@ -25,5 +28,7 @@ object ImmIsUnsign5b extends BoolDecodeField[VecInstPattern] {
 
   val uimmInst: Set[String] = getVariableNameSeq(
     VNCLIP_WI,
+    VAESKF1_VI,
+    VAESKF2_VI
   ).toSet
 }

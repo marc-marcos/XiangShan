@@ -21,7 +21,9 @@ class VectorCryptoWrapper(cfg: VecFuConfig)(implicit p: Parameters) extends VecF
     VCryptoOpcodes.vaesdf.encode.value.U  -> VCrypto.Opcode.vaesdf,
     VCryptoOpcodes.vaesdm.encode.value.U  -> VCrypto.Opcode.vaesdm,
     VCryptoOpcodes.vaesef.encode.value.U -> VCrypto.Opcode.vaesef,
-    VCryptoOpcodes.vaesem.encode.value.U -> VCrypto.Opcode.vaesem
+    VCryptoOpcodes.vaesem.encode.value.U -> VCrypto.Opcode.vaesem,
+    VCryptoOpcodes.vaeskf1.encode.value.U -> VCrypto.Opcode.vaeskf1,
+    VCryptoOpcodes.vaeskf2.encode.value.U -> VCrypto.Opcode.vaeskf2
   ))
 
   vicrypto.io.in.valid             := in.ex.head.valid
@@ -29,6 +31,7 @@ class VectorCryptoWrapper(cfg: VecFuConfig)(implicit p: Parameters) extends VecF
   vicrypto.io.in.bits.vs1          := ex0vs1
   vicrypto.io.in.bits.vs2          := ex0vs2
   vicrypto.io.in.bits.old_vd       := ex0oldVd
+  vicrypto.io.in.bits.uimm         := ex0data.imm(4, 0)
 
   out.ex.zipWithIndex.foreach { case (outStage, stage) =>
     outStage.bits.data.vec.foreach { vecData =>

@@ -1140,7 +1140,9 @@ object SplitTable {
       VAESEF_VS -> dup(null, null, vaesef, null)(_.S1v),
       VAESEF_VV -> dup(null, null, vaesef, null)(_.S1v),
       VAESEM_VS -> dup(null, null, vaesem, null)(_.S1v),
-      VAESEM_VV -> dup(null, null, vaesem, null)(_.S1v)
+      VAESEM_VV -> dup(null, null, vaesem, null)(_.S1v),
+      VAESKF1_VI -> dup(null, null, vaeskf1, null)(_.vui),
+      VAESKF2_VI -> dup(null, null, vaeskf2, null)(_.vui)
     )
 
     opi00Table ++ opi01Table ++ opi10Table ++ opi11Table ++
