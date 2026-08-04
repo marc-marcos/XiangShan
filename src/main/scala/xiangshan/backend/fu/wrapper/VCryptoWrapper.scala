@@ -23,7 +23,9 @@ class VectorCryptoWrapper(cfg: VecFuConfig)(implicit p: Parameters) extends VecF
     VCryptoOpcodes.vaesef.encode.value.U -> VCrypto.Opcode.vaesef,
     VCryptoOpcodes.vaesem.encode.value.U -> VCrypto.Opcode.vaesem,
     VCryptoOpcodes.vaeskf1.encode.value.U -> VCrypto.Opcode.vaeskf1,
-    VCryptoOpcodes.vaeskf2.encode.value.U -> VCrypto.Opcode.vaeskf2
+    VCryptoOpcodes.vaeskf2.encode.value.U -> VCrypto.Opcode.vaeskf2,
+    VCryptoOpcodes.vghsh.encode.value.U -> VCrypto.Opcode.vghsh,
+    VCryptoOpcodes.vgmul.encode.value.U -> VCrypto.Opcode.vgmul
   ))
 
   vicrypto.io.in.valid             := in.ex.head.valid

@@ -8,6 +8,7 @@ import utility._
 import xiangshan._
 import xiangshan.backend.Bundles._
 import xiangshan.backend.decode.isa.Extensions._
+import xiangshan.backend.fu.FuType
 import xiangshan.backend.fu.vector.Bundles.{Vl, Vstart}
 import xiangshan.backend.fu.wrapper.CSRToDecode
 import xiangshan.backend.rename.RatReadPort
@@ -184,7 +185,10 @@ class DecodeStageImp(
         bits.vpu.isDstMask := 0.U // Todo: remove it
         bits.vpu.isOpMask := 0.U // Todo: remove it
         bits.vpu.isMove := 0.U // Todo: remove it
-        bits.vpu.isDependOldVd := 0.U // Todo: remove it
+        // Several VCrypto operations consume vd as an arithmetic input
+        // (old_vd), not only for mask/tail merging. Conservatively preserve
+        // old_vd for the whole VCrypto FU until this is decoded per opcode.
+        bits.vpu.isDependOldVd := bits.fuType === FuType.vcrypto.U
         bits.vpu.isWritePartVd := 0.U // Todo: remove it
         bits.vpu.isVleff := false.B // Todo: remove it
         bits.vpu.maskVecGen := 0.U // Todo: remove it
