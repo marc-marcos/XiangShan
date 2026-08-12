@@ -62,5 +62,5 @@ class VectorCryptoWrapper(cfg: VecFuConfig)(implicit p: Parameters) extends VecF
 }
 
 object VectorCryptoWrapper {
-  val Latency = 2
+  val Latency = 3
 }
