@@ -29,6 +29,7 @@ object ImmIsUnsign5b extends BoolDecodeField[VecInstPattern] {
   val uimmInst: Set[String] = getVariableNameSeq(
     VNCLIP_WI,
     VAESKF1_VI,
-    VAESKF2_VI
+    VAESKF2_VI,
+    VSM4K_VI
   ).toSet
 }
