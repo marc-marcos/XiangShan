@@ -861,6 +861,7 @@ object FuConfig {
     writeVecRf = true,
     writeV0Rf = true,
     latency = CertainLatency(VectorCryptoWrapper.Latency),
+    exceptionOut = Seq(illegalInstr),
     vlWakeUp = true,
     maskWakeUp = true,
     destDataBits = 128,
