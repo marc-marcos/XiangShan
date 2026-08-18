@@ -48,6 +48,8 @@ object Extensions {
 
   case object Zvknha extends UnprivExt(Seq(ZVKNHAType))
 
+  case object Zvknhb extends UnprivExt(Seq(ZVKNHAType))
+
   case object Za64rs extends UnprivExt()
 
   case object Zabha extends UnprivExt(Seq(ZABHAType), tableZabha)
