@@ -16,6 +16,8 @@ import xiangshan.backend.decode.opcode.Opcode.VIPermOpcodes._
 import xiangshan.backend.decode.opcode.Opcode.VMoveOpcodes._
 import xiangshan.backend.decode.opcode.Opcode.VSha256msOpcodes._
 import xiangshan.backend.decode.opcode.Opcode.VSha256cOpcodes._
+import xiangshan.backend.decode.opcode.Opcode.VSha512msOpcodes._
+import xiangshan.backend.decode.opcode.Opcode.VSha512cOpcodes._
 import xiangshan.backend.decode.opcode.Opcode.VCryptoOpcodes._
 import xiangshan.backend.decode.opcode.Opcode.VFCvtOpcodes._
 import xiangshan.backend.decode.opcode.Opcode.VFMacOpcodes._
@@ -132,6 +134,23 @@ object SplitTable {
     val e64SeqMap = dup(_.e64)(e64uop)(func)
 
     e8SeqMap ++ e16SeqMap ++ e32SeqMap ++ e64SeqMap
+  }
+
+  private def dupCrypto256(
+    _uops: => Seq[Opcode],
+  )(
+    func: Opcode => Opcode,
+  ): SeqMap[SewLmulPattern, Seq[Opcode]] = {
+    val uops = _uops.map(o => Option(o).map(_.copy()).map(func).orNull)
+    SeqMap(
+      e64 ## m8 -> Seq.fill(4)(uops).flatten,
+      e64 ## m4 -> Seq.fill(2)(uops).flatten,
+      e64 ## m2 -> Seq.fill(1)(uops).flatten,
+      e64 ## m1 -> Seq.empty,
+      e64 ## mf2 -> Seq.empty,
+      e64 ## mf4 -> Seq.empty,
+      e64 ## mf8 -> Seq.empty,
+    )
   }
 
   private def dupM(
@@ -1125,7 +1144,7 @@ object SplitTable {
     )
 
     val cryptoTable = SeqMap[BitPat, SeqMap[SewLmulPattern, Seq[Opcode]]](
-      VSHA2MS_VV -> dup(null, null, vsha256ms, null)(_.S1v),
+      VSHA2MS_VV -> (dup(null, null, vsha256ms, null)(_.S1v) ++ dupCrypto256(Seq(vsha512ms0, vsha512ms1, vsha512ms2, vsha512ms3))(_.S1v)),
       VSHA2CL_VV -> dup(null, null, vsha256cl, null)(_.S1v),
       VSHA2CH_VV -> dup(null, null, vsha256ch, null)(_.S1v),
       VCLMUL_VV -> dup(null, null, null, vclmul)(_.S1v),

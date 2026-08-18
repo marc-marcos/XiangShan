@@ -168,7 +168,7 @@ case class FuConfig (
 
   def needVecCtrl: Boolean = {
     import FuType._
-    Seq(vipu, vialuF, vimac, vidiv, vppu, vfalu, vmove, vfma, vfdiv, vfcvt, vldu, vstu, vsha256ms, vsha256c, vcrypto).contains(fuType)
+    Seq(vipu, vialuF, vimac, vidiv, vppu, vfalu, vmove, vfma, vfdiv, vfcvt, vldu, vstu, vsha256ms, vsha256c, vsha512ms, vsha512c, vcrypto).contains(fuType)
   }
 
   def needUncertainWakeup: Boolean = {
@@ -202,6 +202,7 @@ case class FuConfig (
                             fuType == FuType.vfdiv || fuType == FuType.vfcvt ||
                             fuType == FuType.vidiv || fuType == FuType.vmove ||
                             fuType == FuType.vsha256ms || fuType == FuType.vsha256c ||
+                            fuType == FuType.vsha512ms || fuType == FuType.vsha512c ||
                             fuType == FuType.vcrypto
 
   def isVecMem: Boolean = fuType == FuType.vldu || fuType == FuType.vstu ||
@@ -849,6 +850,27 @@ object FuConfig {
     readVType = true,
   )
 
+  val VSha512msCfg = FuConfig(
+    name = "vsha512ms",
+    fuType = FuType.vsha512ms,
+    fuGen = (p: Parameters, cfg: FuConfig) => Module(new VSha512msWrapper(cfg)(p).suggestName("VSha512ms")),
+    srcData = Seq(
+      Seq(VecData(), VecData(), VecData()), // vs1, vs2, vs3
+    ),
+    piped = true,
+    writeVecRf = true,
+    writeV0Rf = true,
+    writeFflags = false,
+    latency = CertainLatency(1),
+    vlWakeUp = true,
+    maskWakeUp = true,
+    destDataBits = 128,
+    needSrcFrm = true,
+    readV0 = true,
+    readVl = true,
+    readVType = true,
+  )
+
   val VcryptoCfg = FuConfig(
     name = "vcrypto",
     fuType = FuType.vcrypto,
@@ -1040,7 +1062,7 @@ object FuConfig {
     NJmpCfg, LinkCfg, BrhCfg, I2fCfg, FcmpCfg, I2vCfg, F2vCfg, CsrCfg, AluCfg, MulCfg, DivCfg, FenceCfg, BkuCfg,
     VSetCfg, VSetRvfWvfCfg, VSetRiWvfCfg, VSetRiWiCfg,
     LduCfg, StaCfg, StdCfg, HyldaCfg, HystaCfg, FakeHystaCfg, MouCfg, MoudCfg,
-    VialuCfg, VimacCfg, VidivCfg, VppuCfg, VipuCfg, VmoveCfg, VfaluCfg, VfmaCfg, VfdivCfg, VfcvtCfg, VSha256msCfg, VSha256cCfg,
+    VialuCfg, VimacCfg, VidivCfg, VppuCfg, VipuCfg, VmoveCfg, VfaluCfg, VfmaCfg, VfdivCfg, VfcvtCfg, VSha256msCfg, VSha256cCfg, VSha512msCfg,
     FaluCfg, FmulCfg, FdivCfg, FcvtCfg,
     VStdCfg, VlduCfg, VstuCfg, VseglduCfg, VsegstuCfg, VcryptoCfg
   )
