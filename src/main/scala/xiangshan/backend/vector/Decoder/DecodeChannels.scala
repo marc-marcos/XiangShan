@@ -55,7 +55,7 @@ class DecodeChannels(
   val simpleInsts = InstPattern.extensionInsts(simpleExts: _*)
 
   // Get vector instruction bits pattern by extensions
-  val vectorExts = extensions.intersect(Seq(V, Zvbb, Zvbc, Zvkg, Zvknha, Zvkned, Zvksed, Zacas, ZacasZabha))
+  val vectorExts = extensions.intersect(Seq(V, Zvbb, Zvbc, Zvkg, Zvknha, Zvknhb, Zvkned, Zvksed, Zacas, ZacasZabha))
   val vectorInsts = InstPattern.extensionInsts(vectorExts: _*).map(_.asInstanceOf[VecInstPattern])
 
   val uopBufferSize = maxSplitUopNum - 1
