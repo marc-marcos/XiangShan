@@ -51,7 +51,7 @@ class DecodeChannels(
     s"_M2x${MaxM2UopIdx}_M4x${MaxM4UopIdx}_M8x${MaxM8UopIdx}"
 
   require(extensions.distinct.size == extensions.size, "Duplicate extensions are not allowed")
-  val simpleExts: Seq[ExtBase] = extensions.diff(Seq(V, Zvbb, Zvbc, Zvkg, Zvknha, Zvkned, Zvksed, Zacas, ZacasZabha))
+  val simpleExts: Seq[ExtBase] = extensions.diff(Seq(V, Zvbb, Zvbc, Zvkg, Zvknha, Zvknhb, Zvkned, Zvksed, Zacas, ZacasZabha))
   val simpleInsts = InstPattern.extensionInsts(simpleExts: _*)
 
   // Get vector instruction bits pattern by extensions

@@ -88,6 +88,8 @@ object FuTypeField {
       case _: Opcode.VFRedOpcodes.type => FuType.vfalu
       case _: Opcode.VSha256msOpcodes.type => FuType.vsha256ms
       case _: Opcode.VSha256cOpcodes.type => FuType.vsha256c
+      case _: Opcode.VSha512msOpcodes.type => FuType.vsha512ms
+      case _: Opcode.VSha512cOpcodes.type => FuType.vsha512c
       case _: Opcode.VCryptoOpcodes.type => FuType.vcrypto
     }
   }

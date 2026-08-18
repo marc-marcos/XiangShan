@@ -162,6 +162,7 @@ object Extensions {
     Zba, Zbb, Zbc, Zbs, Zbkb, Zbkc, Zbkx,
     V, H,
     Zvknha,
+    Zvknhb,
     Zvkg,
     Zvkned,
     Zvksed,

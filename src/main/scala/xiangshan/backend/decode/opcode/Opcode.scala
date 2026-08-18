@@ -68,6 +68,8 @@ object Opcode {
   val VMoveOpcodes      = opcodes.VMoveOpcode
   val VSha256msOpcodes  = opcodes.VSha256msOpcode
   val VSha256cOpcodes   = opcodes.VSha256cOpcode
+  val VSha512msOpcodes  = opcodes.VSha512msOpcode
+  val VSha512cOpcodes   = opcodes.VSha512cOpcode
   val FCvtOpcodes       = opcodes.FCvtOpcode
   val FMiscOpcodes      = opcodes.FMiscOpcode
   val FMacOpcodes       = opcodes.FMacOpcode
