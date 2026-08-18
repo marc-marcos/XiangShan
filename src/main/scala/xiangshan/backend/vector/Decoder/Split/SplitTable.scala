@@ -143,7 +143,8 @@ object SplitTable {
   ): SeqMap[SewLmulPattern, Seq[Opcode]] = {
     val uops = _uops.map(o => Option(o).map(_.copy()).map(func).orNull)
     SeqMap(
-      e64 ## m8 -> Seq.fill(4)(uops).flatten,
+      // Temporarily unsupported: 16 uops exceed the decoder's 8-uop capacity.
+      e64 ## m8 -> Seq.empty,
       e64 ## m4 -> Seq.fill(2)(uops).flatten,
       e64 ## m2 -> Seq.fill(1)(uops).flatten,
       e64 ## m1 -> Seq.empty,
